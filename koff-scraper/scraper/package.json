@@ -1,0 +1,13 @@
+{
+  "name": "koff-scraper",
+  "version": "2.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "scrape": "node scrape.mjs"
+  },
+  "dependencies": {},
+  "engines": {
+    "node": ">=18"
+  }
+}
