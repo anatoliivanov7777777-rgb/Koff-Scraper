@@ -1,0 +1,27 @@
+name: Scrape koff.ro daily
+
+on:
+  schedule:
+    - cron: "0 17 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: koff-scraper/scraper
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install dependencies
+        run: npm install
+      - name: Run scraper
+        env:
+          KOFF_EMAIL: ${{ secrets.KOFF_EMAIL }}
+          KOFF_PASSWORD: ${{ secrets.KOFF_PASSWORD }}
+          CONVEX_HTTP_URL: ${{ secrets.CONVEX_HTTP_URL }}
+          SCRAPER_SECRET: ${{ secrets.SCRAPER_SECRET }}
+        run: npm run scrape
