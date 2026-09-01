@@ -17,28 +17,44 @@ if (!KOFF_EMAIL || !KOFF_PASSWORD || !CONVEX_URL || !SCRAPER_SECRET) {
 
 const BASE_URL = "https://shop.koff.ro";
 
-// Прихванатите cookies от логин отговора - пращат се с всяка следваща заявка
-let sessionCookies = "";
+// Прихванатите cookies, съхранени като name -> value, за да можем
+// правилно да ги обединяваме между отделните заявки (сървърът връща
+// сесийна бисквитка И отделна CSRF бисквитка едновременно, а обикновеният
+// res.headers.get("set-cookie") в Node вижда само първата от тях).
+const cookieJar = new Map();
 
-// Малка помощна функция, която пази cookies между заявките
-// (Node fetch не пази cookie jar автоматично като браузър)
+function cookieHeaderString() {
+  return [...cookieJar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+}
+
 async function apiFetch(path, options = {}) {
+  const cookieHeader = cookieHeaderString();
+
   const res = await fetch(`${BASE_URL}${path}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
       Accept: "application/json",
-      ...(sessionCookies ? { Cookie: sessionCookies } : {}),
+      ...(cookieHeader ? { Cookie: cookieHeader } : {}),
       ...options.headers,
     },
   });
 
-  const setCookie = res.headers.get("set-cookie");
-  if (setCookie) {
-    sessionCookies = setCookie
-      .split(/,(?=[^;]+?=)/)
-      .map((c) => c.split(";")[0])
-      .join("; ");
+  // getSetCookie() връща ВСИЧКИ Set-Cookie хедъри поотделно (Node 18.14+).
+  // Правим fallback към get() за по-стари версии, но той вижда само една.
+  const setCookies =
+    typeof res.headers.getSetCookie === "function"
+      ? res.headers.getSetCookie()
+      : res.headers.get("set-cookie")
+      ? [res.headers.get("set-cookie")]
+      : [];
+
+  for (const raw of setCookies) {
+    const pair = raw.split(";")[0];
+    const eqIndex = pair.indexOf("=");
+    if (eqIndex > -1) {
+      cookieJar.set(pair.slice(0, eqIndex), pair.slice(eqIndex + 1));
+    }
   }
 
   return res;
