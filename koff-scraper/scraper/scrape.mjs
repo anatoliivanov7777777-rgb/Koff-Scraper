@@ -35,17 +35,12 @@ async function apiFetch(path, options = {}) {
     headers: {
       "Content-Type": "application/json",
       Accept: "application/json",
-      // Сайтът проверява тази версия и отхвърля заявки без нея с грешка
-      // "incompatible version of the application" - взето директно от
-      // headers-ите на реален браузър.
       "X-App-Version": "0.9.78",
       ...(cookieHeader ? { Cookie: cookieHeader } : {}),
       ...options.headers,
     },
   });
 
-  // getSetCookie() връща ВСИЧКИ Set-Cookie хедъри поотделно (Node 18.14+).
-  // Правим fallback към get() за по-стари версии, но той вижда само една.
   const setCookies =
     typeof res.headers.getSetCookie === "function"
       ? res.headers.getSetCookie()
@@ -65,15 +60,6 @@ async function apiFetch(path, options = {}) {
 }
 
 async function getCsrfToken() {
-  // Сайтът е Yii2 (PHP framework) и изисква CSRF токен преди приемане на
-  // POST заявки. Токенът се взима от <meta name="csrf-token"> на всяка
-  // обикновена страница, а придружаващата сесийна бисквитка се задава
-  // автоматично от сървъра при тази GET заявка.
-  //
-  // Добавяме случаен query параметър, за да "разбием" евентуален
-  // Cloudflare/CDN кеш на страницата - ако получим кеширана версия на
-  // страницата, тя няма да носи свежа Set-Cookie бисквитка и токенът ще
-  // бъде невалиден за нашата собствена сесия.
   const res = await apiFetch(`/en?_=${Date.now()}`);
   const html = await res.text();
 
@@ -120,11 +106,19 @@ async function login() {
 }
 
 async function getAllCategoryIds() {
-  const res = await apiFetch("/api/category");
+  const res = await apiFetch(`/api/category?_=${Date.now()}`);
   if (!res.ok) {
     throw new Error(`Неуспешно взимане на категории: ${res.status}`);
   }
   const tree = await res.json();
+
+  console.log(
+    "Суров отговор от /api/category (тип и дължина):",
+    Array.isArray(tree) ? `масив с ${tree.length} елемента` : typeof tree
+  );
+  if (!Array.isArray(tree) || tree.length === 0) {
+    console.log("Пълен суров отговор:", JSON.stringify(tree).slice(0, 500));
+  }
 
   const ids = [];
   function walk(nodes) {
@@ -145,7 +139,7 @@ async function scrapeCategoryProducts(categoryId) {
 
   while (true) {
     const res = await apiFetch(
-      `/api/category/${categoryId}/products?expand=cartQty,inCart&page=${page}`
+      `/api/category/${categoryId}/products?expand=cartQty,inCart&page=${page}&_=${Date.now()}`
     );
 
     if (!res.ok) {
@@ -210,8 +204,6 @@ async function main() {
   const categories = await getAllCategoryIds();
   console.log(`Намерени ${categories.length} категории (всички нива).`);
 
-  // sourceId -> продукт, за да не дублираме продукти, които се показват
-  // в няколко категории едновременно (напр. родителска + подкатегория)
   const productsById = new Map();
 
   for (const cat of categories) {
@@ -225,8 +217,6 @@ async function main() {
       }
     }
 
-    // Малка пауза между заявките към категориите, за да не претоварваме
-    // API-то на koff.ro и да не заприличаме на агресивен bot
     await new Promise((r) => setTimeout(r, 300));
   }
 
