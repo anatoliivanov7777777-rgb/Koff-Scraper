@@ -2,10 +2,9 @@
 // Няма нужда от Playwright/headless browser - сайтът е Vue SPA, но
 // цялата данни идват от чисти JSON endpoint-и, които викаме директно.
 
-// ---- Конфигурация от environment variables (задават се в GitHub Secrets) ----
 const KOFF_EMAIL = process.env.KOFF_EMAIL;
 const KOFF_PASSWORD = process.env.KOFF_PASSWORD;
-const CONVEX_URL = process.env.CONVEX_HTTP_URL; // напр. https://xxxxx.convex.site/ingest-products
+const CONVEX_URL = process.env.CONVEX_HTTP_URL;
 const SCRAPER_SECRET = process.env.SCRAPER_SECRET;
 
 if (!KOFF_EMAIL || !KOFF_PASSWORD || !CONVEX_URL || !SCRAPER_SECRET) {
@@ -21,7 +20,7 @@ const cookieJar = new Map();
 
 let accessToken = null;
 let tokenIssuedAt = 0;
-const TOKEN_MAX_AGE_MS = 8 * 60 * 1000; // опресняваме на всеки 8 мин (токенът тае за 10)
+const TOKEN_MAX_AGE_MS = 8 * 60 * 1000;
 
 let lastCsrfToken = null;
 
@@ -83,7 +82,6 @@ async function login() {
   const csrfToken = await getCsrfToken();
   lastCsrfToken = csrfToken;
   console.log("CSRF токен взет:", csrfToken.slice(0, 20) + "...");
-  console.log("Бисквитки след взимане на CSRF:", [...cookieJar.keys()].join(", "));
 
   const res = await apiFetch("/login/enter", {
     method: "POST",
@@ -147,14 +145,6 @@ async function getAllCategoryIds() {
     throw new Error(`Неуспешно взимане на категории: ${res.status}`);
   }
   const tree = await res.json();
-
-  console.log(
-    "Суров отговор от /api/category (тип и дължина):",
-    Array.isArray(tree) ? `масив с ${tree.length} елемента` : typeof tree
-  );
-  if (!Array.isArray(tree) || tree.length === 0) {
-    console.log("Пълен суров отговор:", JSON.stringify(tree).slice(0, 500));
-  }
 
   const ids = [];
   function walk(nodes) {
@@ -231,10 +221,39 @@ async function pushToConvex(products) {
   }
 
   const json = await res.json();
-  console.log("Convex отговор:", json);
+  console.log(`Партида качена: ${json.received} продукта`);
+}
+
+async function finalizeIngest(cutoffTimestamp) {
+  let mayHaveMore = true;
+  let totalDeactivated = 0;
+
+  while (mayHaveMore) {
+    const res = await fetch(CONVEX_URL.replace("/ingest-products", "/finalize-ingest"), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-scraper-secret": SCRAPER_SECRET,
+      },
+      body: JSON.stringify({ cutoffTimestamp }),
+    });
+
+    if (!res.ok) {
+      throw new Error(`Finalize failed: ${res.status} ${await res.text()}`);
+    }
+
+    const json = await res.json();
+    totalDeactivated += json.deactivated;
+    mayHaveMore = json.mayHaveMore;
+    console.log(`Деактивирани дотук: ${totalDeactivated}`);
+  }
+
+  return totalDeactivated;
 }
 
 async function main() {
+  const runStartedAt = Date.now();
+
   await login();
   await refreshAccessToken();
 
@@ -265,6 +284,10 @@ async function main() {
   for (let i = 0; i < payload.length; i += BATCH_SIZE) {
     await pushToConvex(payload.slice(i, i + BATCH_SIZE));
   }
+
+  console.log("Всички партиди изпратени. Деактивирам остарели продукти...");
+  const deactivated = await finalizeIngest(runStartedAt);
+  console.log(`Общо деактивирани: ${deactivated}`);
 
   console.log("Готово!");
 }
