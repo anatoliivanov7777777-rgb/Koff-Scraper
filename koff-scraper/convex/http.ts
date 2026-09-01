@@ -4,12 +4,14 @@ import { internal } from "./_generated/api";
 
 const http = httpRouter();
 
-// GitHub Actions ще прави POST заявка тук след всеки скрейп
+// GitHub Actions праща тук по една партида (batch) продукти наведнъж -
+// само upsert, БЕЗ деактивиране на стари продукти тук (виж /finalize-ingest
+// по-долу). Извикването на деактивиране след всяка партида причиняваше
+// "Too many reads" грешка в Convex при голям каталог.
 http.route({
   path: "/ingest-products",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
-    // Проста защита с таен ключ - трябва да съвпада с това в Convex env vars
     const authHeader = request.headers.get("x-scraper-secret");
     if (authHeader !== process.env.SCRAPER_SECRET) {
       return new Response("Unauthorized", { status: 401 });
@@ -28,26 +30,46 @@ http.route({
       return new Response("No products provided", { status: 400 });
     }
 
-    const runStartedAt = Date.now();
-
     for (const p of products) {
       await ctx.runMutation(internal.products.upsertProduct, p);
     }
 
-    // Всичко, което не е било "видяно" в този run, вероятно е изчезнало от koff.ro
-    const deactivated = await ctx.runMutation(
-      internal.products.deactivateStale,
-      { cutoffTimestamp: runStartedAt }
-    );
-
     return new Response(
-      JSON.stringify({
-        ok: true,
-        received: products.length,
-        deactivated,
-      }),
+      JSON.stringify({ ok: true, received: products.length }),
       { status: 200, headers: { "Content-Type": "application/json" } }
     );
+  }),
+});
+
+// Извиква се ЕДИН ПЪТ, след като всички партиди са изпратени успешно.
+// Маркира продуктите, които не са били "видени" в текущия run (т.е. вече
+// не съществуват в koff.ro), като неактивни. Тъй като може да остане още
+// какво за деактивиране (лимит от 2000 на извикване), скрейпърът я вика
+// на цикъл, докато mayHaveMore стане false.
+http.route({
+  path: "/finalize-ingest",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("x-scraper-secret");
+    if (authHeader !== process.env.SCRAPER_SECRET) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+
+    const body = await request.json();
+    const cutoffTimestamp: number = body.cutoffTimestamp;
+
+    if (typeof cutoffTimestamp !== "number") {
+      return new Response("Missing cutoffTimestamp", { status: 400 });
+    }
+
+    const result = await ctx.runMutation(internal.products.deactivateStale, {
+      cutoffTimestamp,
+    });
+
+    return new Response(JSON.stringify({ ok: true, ...result }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
   }),
 });
 
