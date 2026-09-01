@@ -17,19 +17,13 @@ if (!KOFF_EMAIL || !KOFF_PASSWORD || !CONVEX_URL || !SCRAPER_SECRET) {
 
 const BASE_URL = "https://shop.koff.ro";
 
-// Прихванатите cookies, съхранени като name -> value, за да можем
-// правилно да ги обединяваме между отделните заявки (сървърът връща
-// сесийна бисквитка И отделна CSRF бисквитка едновременно, а обикновеният
-// res.headers.get("set-cookie") в Node вижда само първата от тях).
 const cookieJar = new Map();
 
-// JWT access token, взет от /login/refresh - трябва да се праща като
-// "Authorization: Bearer ..." на всяка заявка към /api/*. Обикновената
-// сесийна бисквитка НЕ е достатъчна за тези ендпойнти - затова получавахме
-// празни резултати преди тази поправка.
 let accessToken = null;
 let tokenIssuedAt = 0;
 const TOKEN_MAX_AGE_MS = 8 * 60 * 1000; // опресняваме на всеки 8 мин (токенът тае за 10)
+
+let lastCsrfToken = null;
 
 function cookieHeaderString() {
   return [...cookieJar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
@@ -87,6 +81,7 @@ async function getCsrfToken() {
 
 async function login() {
   const csrfToken = await getCsrfToken();
+  lastCsrfToken = csrfToken;
   console.log("CSRF токен взет:", csrfToken.slice(0, 20) + "...");
   console.log("Бисквитки след взимане на CSRF:", [...cookieJar.keys()].join(", "));
 
@@ -115,7 +110,13 @@ async function login() {
 }
 
 async function refreshAccessToken() {
-  const res = await apiFetch("/login/refresh", { method: "POST" });
+  const res = await apiFetch("/login/refresh", {
+    method: "POST",
+    headers: {
+      "X-Csrf-Token": lastCsrfToken,
+      "X-Requested-With": "XMLHttpRequest",
+    },
+  });
 
   if (!res.ok) {
     throw new Error(
