@@ -1,7 +1,4 @@
 // Скрейпър, който вика директно JSON API-то на shop.koff.ro.
-// Няма нужда от Playwright/headless browser - сайтът е Vue SPA, но
-// цялата данни идват от чисти JSON endpoint-и, които викаме директно.
-
 const KOFF_EMAIL = process.env.KOFF_EMAIL;
 const KOFF_PASSWORD = process.env.KOFF_PASSWORD;
 const CONVEX_URL = process.env.CONVEX_HTTP_URL;
@@ -190,7 +187,7 @@ async function scrapeCategoryProducts(categoryId) {
   return products;
 }
 
-function mapToConvexProduct(raw) {
+function mapToConvexProduct(raw, categoryName) {
   const base = raw.salePrice ?? raw.basePrice;
 
   if (base === null || base === undefined) {
@@ -203,6 +200,8 @@ function mapToConvexProduct(raw) {
     description: raw.description || "",
     basePrice: base,
     imageUrl: raw.coverUrl || undefined,
+    category: categoryName,
+    manufacturer: raw.manufacturer?.name || undefined,
   };
 }
 
@@ -222,6 +221,24 @@ async function pushToConvex(products) {
 
   const json = await res.json();
   console.log(`Партида качена: ${json.received} продукта`);
+}
+
+async function pushCategories(categoryNames) {
+  const res = await fetch(CONVEX_URL.replace("/ingest-products", "/ingest-categories"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-scraper-secret": SCRAPER_SECRET,
+    },
+    body: JSON.stringify({ categories: categoryNames }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Ingest categories failed: ${res.status} ${await res.text()}`);
+  }
+
+  const json = await res.json();
+  console.log(`Категории качени: ${json.count}`);
 }
 
 async function finalizeIngest(cutoffTimestamp) {
@@ -260,6 +277,9 @@ async function main() {
   const categories = await getAllCategoryIds();
   console.log(`Намерени ${categories.length} категории (всички нива).`);
 
+  const uniqueCategoryNames = [...new Set(categories.map((c) => c.name))];
+  await pushCategories(uniqueCategoryNames);
+
   const productsById = new Map();
 
   for (const cat of categories) {
@@ -268,7 +288,7 @@ async function main() {
     console.log(`Категория "${cat.name}" (id ${cat.id}): ${raw.length} продукта`);
 
     for (const rawProduct of raw) {
-      const mapped = mapToConvexProduct(rawProduct);
+      const mapped = mapToConvexProduct(rawProduct, cat.name);
       if (mapped) {
         productsById.set(mapped.sourceId, mapped);
       }
