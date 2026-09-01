@@ -65,7 +65,12 @@ async function getCsrfToken() {
   // POST заявки. Токенът се взима от <meta name="csrf-token"> на всяка
   // обикновена страница, а придружаващата сесийна бисквитка се задава
   // автоматично от сървъра при тази GET заявка.
-  const res = await apiFetch("/en");
+  //
+  // Добавяме случаен query параметър, за да "разбием" евентуален
+  // Cloudflare/CDN кеш на страницата - ако получим кеширана версия на
+  // страницата, тя няма да носи свежа Set-Cookie бисквитка и токенът ще
+  // бъде невалиден за нашата собствена сесия.
+  const res = await apiFetch(`/en?_=${Date.now()}`);
   const html = await res.text();
 
   const match = html.match(
@@ -83,16 +88,18 @@ async function getCsrfToken() {
 
 async function login() {
   const csrfToken = await getCsrfToken();
+  console.log("CSRF токен взет:", csrfToken.slice(0, 20) + "...");
+  console.log("Бисквитки след взимане на CSRF:", [...cookieJar.keys()].join(", "));
 
   const res = await apiFetch("/login/enter", {
     method: "POST",
     headers: {
-      "X-CSRF-Token": csrfToken,
+      "X-Csrf-Token": csrfToken,
+      "X-Requested-With": "XMLHttpRequest",
     },
     body: JSON.stringify({
       username: KOFF_EMAIL,
       password: KOFF_PASSWORD,
-      _csrf: csrfToken,
     }),
   });
 
