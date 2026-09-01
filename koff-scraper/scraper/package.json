@@ -6,7 +6,9 @@
   "scripts": {
     "scrape": "node scrape.mjs"
   },
-  "dependencies": {},
+  "dependencies": {
+    "xlsx": "^0.18.5"
+  },
   "engines": {
     "node": ">=18"
   }

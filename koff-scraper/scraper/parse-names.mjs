@@ -1,0 +1,78 @@
+// Разпознава дали "моделният" сегмент от името на продукта е реален
+// съвместим телефон/устройство, или е техническа спецификация (за кабели,
+// зарядни и т.н.), и разделя името на: продуктова линия, "суров" сегмент
+// с модел(и), цвят.
+
+const DEVICE_KEYWORDS = [
+  "iphone", "ipad", "macbook", "airpods", "apple watch",
+  "samsung", "galaxy", "buds",
+  "xiaomi", "redmi", "poco", "mi ",
+  "honor", "huawei", "mate", "nova",
+  "oneplus", "nothing phone",
+  "google", "pixel",
+  "oppo", "reno", "realme", "narzo", "gt ",
+  "vivo", "iqoo",
+  "motorola", "moto ",
+  "nokia",
+  "sony", "xperia",
+  "watch", "band ",
+  "infinix", "tecno", "spark", "hot 4", "hot 5",
+  "itel", "zte", "nubia", "meizu",
+  "blackview", "doogee", "ulefone", "cubot", "oukitel", "umidigi",
+  "alcatel", "cat s", "asus", "rog phone", "lg ", "fairphone",
+  "garmin", "fenix", "instinct", "forerunner", "approach",
+  "amazfit", "lenovo", "tesla model",
+];
+
+function looksLikeDeviceModel(segment) {
+  const s = segment.toLowerCase();
+  return DEVICE_KEYWORDS.some((kw) => s.includes(kw));
+}
+
+export function parseProductName(name, manufacturer) {
+  const parts = name.split(" - ").map((p) => p.trim());
+
+  if (parts.length < 2) {
+    return { productLine: name, models: [], color: "", rawModelSegment: "" };
+  }
+
+  const color = parts[parts.length - 1];
+  let modelSegment = "";
+  let productLine = "";
+
+  if (parts.length >= 3) {
+    modelSegment = parts[parts.length - 2];
+    if (parts.length > 3) {
+      productLine = parts.slice(1, -2).join(" - ");
+    } else {
+      productLine =
+        parts[0].trim().toLowerCase() === (manufacturer || "").toLowerCase()
+          ? parts[1]
+          : "";
+    }
+  } else {
+    modelSegment = "";
+    productLine = parts.length > 1 ? parts[1] : "";
+  }
+
+  let models = [];
+  let rawModelSegment = "";
+
+  if (modelSegment && looksLikeDeviceModel(modelSegment)) {
+    const cleaned = modelSegment.replace(/^for\s+/i, "");
+    models = cleaned
+      .split("/")
+      .map((m) => m.trim())
+      .filter(Boolean);
+    rawModelSegment = modelSegment;
+  } else if (modelSegment) {
+    // моделният сегмент всъщност е спецификация (кабел, зарядно и т.н.)
+    if (!productLine) {
+      productLine = modelSegment;
+    } else {
+      productLine = `${productLine} - ${modelSegment}`;
+    }
+  }
+
+  return { productLine, models, color, rawModelSegment };
+}

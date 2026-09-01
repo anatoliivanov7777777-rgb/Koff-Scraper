@@ -2,9 +2,16 @@
 // Няма нужда от Playwright/headless browser - сайтът е Vue SPA, но
 // цялата данни идват от чисти JSON endpoint-и, които викаме директно.
 
+import { generateExports } from "./generate-exports.mjs";
+
+// Папка, в която се записват готовите .xlsx файлове за импорт в case-king.bg
+// (GitHub Actions ги качва като "artifact" след всеки run - виж workflow-а).
+const EXPORT_OUT_DIR = process.env.EXPORT_OUT_DIR || ".";
+
+// ---- Конфигурация от environment variables (задават се в GitHub Secrets) ----
 const KOFF_EMAIL = process.env.KOFF_EMAIL;
 const KOFF_PASSWORD = process.env.KOFF_PASSWORD;
-const CONVEX_URL = process.env.CONVEX_HTTP_URL;
+const CONVEX_URL = process.env.CONVEX_HTTP_URL; // напр. https://xxxxx.convex.site/ingest-products
 const SCRAPER_SECRET = process.env.SCRAPER_SECRET;
 
 if (!KOFF_EMAIL || !KOFF_PASSWORD || !CONVEX_URL || !SCRAPER_SECRET) {
@@ -16,12 +23,22 @@ if (!KOFF_EMAIL || !KOFF_PASSWORD || !CONVEX_URL || !SCRAPER_SECRET) {
 
 const BASE_URL = "https://shop.koff.ro";
 
+// Прихванатите cookies, съхранени като name -> value, за да можем
+// правилно да ги обединяваме между отделните заявки (сървърът връща
+// сесийна бисквитка И отделна CSRF бисквитка едновременно, а обикновеният
+// res.headers.get("set-cookie") в Node вижда само първата от тях).
 const cookieJar = new Map();
 
+// JWT access token, взет от /login/refresh - трябва да се праща като
+// "Authorization: Bearer ..." на всяка заявка към /api/*. Обикновената
+// сесийна бисквитка НЕ е достатъчна за тези ендпойнти - затова получавахме
+// празни резултати преди тази поправка.
 let accessToken = null;
 let tokenIssuedAt = 0;
-const TOKEN_MAX_AGE_MS = 8 * 60 * 1000;
+const TOKEN_MAX_AGE_MS = 8 * 60 * 1000; // опресняваме на всеки 8 мин (токенът тае за 10)
 
+// Пазим последния взет CSRF токен глобално - и /login/enter, И /login/refresh
+// (и вероятно всяка друга POST заявка) го изискват в X-Csrf-Token header-а.
 let lastCsrfToken = null;
 
 function cookieHeaderString() {
@@ -36,6 +53,9 @@ async function apiFetch(path, options = {}) {
     headers: {
       "Content-Type": "application/json",
       Accept: "application/json",
+      // Сайтът проверява тази версия и отхвърля заявки без нея с грешка
+      // "incompatible version of the application" - взето директно от
+      // headers-ите на реален браузър.
       "X-App-Version": "0.9.78",
       ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       ...(cookieHeader ? { Cookie: cookieHeader } : {}),
@@ -43,6 +63,8 @@ async function apiFetch(path, options = {}) {
     },
   });
 
+  // getSetCookie() връща ВСИЧКИ Set-Cookie хедъри поотделно (Node 18.14+).
+  // Правим fallback към get() за по-стари версии, но той вижда само една.
   const setCookies =
     typeof res.headers.getSetCookie === "function"
       ? res.headers.getSetCookie()
@@ -62,6 +84,15 @@ async function apiFetch(path, options = {}) {
 }
 
 async function getCsrfToken() {
+  // Сайтът е Yii2 (PHP framework) и изисква CSRF токен преди приемане на
+  // POST заявки. Токенът се взима от <meta name="csrf-token"> на всяка
+  // обикновена страница, а придружаващата сесийна бисквитка се задава
+  // автоматично от сървъра при тази GET заявка.
+  //
+  // Добавяме случаен query параметър, за да "разбием" евентуален
+  // Cloudflare/CDN кеш на страницата - ако получим кеширана версия на
+  // страницата, тя няма да носи свежа Set-Cookie бисквитка и токенът ще
+  // бъде невалиден за нашата собствена сесия.
   const res = await apiFetch(`/en?_=${Date.now()}`);
   const html = await res.text();
 
@@ -82,6 +113,7 @@ async function login() {
   const csrfToken = await getCsrfToken();
   lastCsrfToken = csrfToken;
   console.log("CSRF токен взет:", csrfToken.slice(0, 20) + "...");
+  console.log("Бисквитки след взимане на CSRF:", [...cookieJar.keys()].join(", "));
 
   const res = await apiFetch("/login/enter", {
     method: "POST",
@@ -146,6 +178,14 @@ async function getAllCategoryIds() {
   }
   const tree = await res.json();
 
+  console.log(
+    "Суров отговор от /api/category (тип и дължина):",
+    Array.isArray(tree) ? `масив с ${tree.length} елемента` : typeof tree
+  );
+  if (!Array.isArray(tree) || tree.length === 0) {
+    console.log("Пълен суров отговор:", JSON.stringify(tree).slice(0, 500));
+  }
+
   const ids = [];
   function walk(nodes) {
     for (const node of nodes) {
@@ -190,6 +230,10 @@ async function scrapeCategoryProducts(categoryId) {
   return products;
 }
 
+// Трябва да съвпадат ТОЧНО с B2B_MARKUP/B2C_MARKUP в convex/products.ts
+const B2B_MARKUP = 1.6;
+const B2C_MARKUP = 1.8;
+
 function mapToConvexProduct(raw, categoryName) {
   const base = raw.salePrice ?? raw.basePrice;
 
@@ -205,6 +249,16 @@ function mapToConvexProduct(raw, categoryName) {
     imageUrl: raw.coverUrl || undefined,
     category: categoryName,
     manufacturer: raw.manufacturer?.name || undefined,
+  };
+}
+
+// Отделна версия САМО за Excel export-а (с изчислени цени) - НЕ се праща
+// към Convex, защото Convex стриктно отхвърля обекти с неочаквани полета.
+function withDisplayPrices(product) {
+  return {
+    ...product,
+    priceB2B: Math.round(product.basePrice * B2B_MARKUP * 100) / 100,
+    priceB2C: Math.round(product.basePrice * B2C_MARKUP * 100) / 100,
   };
 }
 
@@ -283,6 +337,8 @@ async function main() {
   const uniqueCategoryNames = [...new Set(categories.map((c) => c.name))];
   await pushCategories(uniqueCategoryNames);
 
+  // sourceId -> продукт, за да не дублираме продукти, които се показват
+  // в няколко категории едновременно (напр. родителска + подкатегория)
   const productsById = new Map();
 
   for (const cat of categories) {
@@ -297,6 +353,8 @@ async function main() {
       }
     }
 
+    // Малка пауза между заявките към категориите, за да не претоварваме
+    // API-то на koff.ro и да не заприличаме на агресивен bot
     await new Promise((r) => setTimeout(r, 300));
   }
 
@@ -311,6 +369,10 @@ async function main() {
   console.log("Всички партиди изпратени. Деактивирам остарели продукти...");
   const deactivated = await finalizeIngest(runStartedAt);
   console.log(`Общо деактивирани: ${deactivated}`);
+
+  console.log("Генерирам Excel файлове за импорт в case-king.bg...");
+  const withPrices = payload.map(withDisplayPrices);
+  generateExports(withPrices, EXPORT_OUT_DIR);
 
   console.log("Готово!");
 }
