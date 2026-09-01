@@ -24,3 +24,11 @@ jobs:
           CONVEX_HTTP_URL: ${{ secrets.CONVEX_HTTP_URL }}
           SCRAPER_SECRET: ${{ secrets.SCRAPER_SECRET }}
         run: npm run scrape
+              - name: Качване на Excel файловете като artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: case-king-import-${{ github.run_id }}
+          path: |
+            koff-scraper/scraper/koff-import-gotovi.xlsx
+            koff-scraper/scraper/koff-import-chakashti-kategorii.xlsx
+          retention-days: 14
