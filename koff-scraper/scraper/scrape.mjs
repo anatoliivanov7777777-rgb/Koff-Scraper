@@ -1,4 +1,7 @@
 // Скрейпър, който вика директно JSON API-то на shop.koff.ro.
+// Няма нужда от Playwright/headless browser - сайтът е Vue SPA, но
+// цялата данни идват от чисти JSON endpoint-и, които викаме директно.
+
 const KOFF_EMAIL = process.env.KOFF_EMAIL;
 const KOFF_PASSWORD = process.env.KOFF_PASSWORD;
 const CONVEX_URL = process.env.CONVEX_HTTP_URL;
