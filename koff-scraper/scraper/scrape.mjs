@@ -44,12 +44,39 @@ async function apiFetch(path, options = {}) {
   return res;
 }
 
+async function getCsrfToken() {
+  // Сайтът е Yii2 (PHP framework) и изисква CSRF токен преди приемане на
+  // POST заявки. Токенът се взима от <meta name="csrf-token"> на всяка
+  // обикновена страница, а придружаващата сесийна бисквитка се задава
+  // автоматично от сървъра при тази GET заявка.
+  const res = await apiFetch("/en");
+  const html = await res.text();
+
+  const match = html.match(
+    /<meta\s+name=["']csrf-token["']\s+content=["']([^"']+)["']/i
+  );
+
+  if (!match) {
+    throw new Error(
+      "Не успях да намеря CSRF токен на страницата - HTML структурата на сайта вероятно се е променила."
+    );
+  }
+
+  return match[1];
+}
+
 async function login() {
+  const csrfToken = await getCsrfToken();
+
   const res = await apiFetch("/login/enter", {
     method: "POST",
+    headers: {
+      "X-CSRF-Token": csrfToken,
+    },
     body: JSON.stringify({
       username: KOFF_EMAIL,
       password: KOFF_PASSWORD,
+      _csrf: csrfToken,
     }),
   });
 
