@@ -23,6 +23,14 @@ const BASE_URL = "https://shop.koff.ro";
 // res.headers.get("set-cookie") в Node вижда само първата от тях).
 const cookieJar = new Map();
 
+// JWT access token, взет от /login/refresh - трябва да се праща като
+// "Authorization: Bearer ..." на всяка заявка към /api/*. Обикновената
+// сесийна бисквитка НЕ е достатъчна за тези ендпойнти - затова получавахме
+// празни резултати преди тази поправка.
+let accessToken = null;
+let tokenIssuedAt = 0;
+const TOKEN_MAX_AGE_MS = 8 * 60 * 1000; // опресняваме на всеки 8 мин (токенът тае за 10)
+
 function cookieHeaderString() {
   return [...cookieJar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
 }
@@ -36,6 +44,7 @@ async function apiFetch(path, options = {}) {
       "Content-Type": "application/json",
       Accept: "application/json",
       "X-App-Version": "0.9.78",
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       ...(cookieHeader ? { Cookie: cookieHeader } : {}),
       ...options.headers,
     },
@@ -103,6 +112,32 @@ async function login() {
   }
 
   console.log("Логнати успешно в koff.ro.");
+}
+
+async function refreshAccessToken() {
+  const res = await apiFetch("/login/refresh", { method: "POST" });
+
+  if (!res.ok) {
+    throw new Error(
+      `Неуспешно взимане на access token: ${res.status} ${await res.text()}`
+    );
+  }
+
+  const json = await res.json();
+  if (!json.accessToken) {
+    throw new Error(`/login/refresh не върна accessToken -> ${JSON.stringify(json)}`);
+  }
+
+  accessToken = json.accessToken;
+  tokenIssuedAt = Date.now();
+  console.log("Access token взет успешно (roles:", (json.roles || []).join(", ") + ")");
+}
+
+async function ensureFreshToken() {
+  if (Date.now() - tokenIssuedAt > TOKEN_MAX_AGE_MS) {
+    console.log("Access token е стар - опреснявам...");
+    await refreshAccessToken();
+  }
 }
 
 async function getAllCategoryIds() {
@@ -200,6 +235,7 @@ async function pushToConvex(products) {
 
 async function main() {
   await login();
+  await refreshAccessToken();
 
   const categories = await getAllCategoryIds();
   console.log(`Намерени ${categories.length} категории (всички нива).`);
@@ -207,6 +243,7 @@ async function main() {
   const productsById = new Map();
 
   for (const cat of categories) {
+    await ensureFreshToken();
     const raw = await scrapeCategoryProducts(cat.id);
     console.log(`Категория "${cat.name}" (id ${cat.id}): ${raw.length} продукта`);
 
