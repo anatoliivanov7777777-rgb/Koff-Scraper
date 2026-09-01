@@ -41,19 +41,22 @@ export const upsertProduct = internalMutation({
 });
 
 // Маркира като неактивни продуктите, които не са били видени в последния run
-// (т.е. вероятно вече не съществуват в koff.ro)
+// (т.е. вероятно вече не съществуват в koff.ro). Ползва индекс вместо пълно
+// сканиране на таблицата, и ограничава броя наведнъж, за да не удря лимита
+// на Convex за брой четения в едно извикване (4096).
 export const deactivateStale = internalMutation({
   args: { cutoffTimestamp: v.number() },
   handler: async (ctx, args) => {
     const stale = await ctx.db
       .query("products")
-      .filter((q) => q.lt(q.field("lastSeenAt"), args.cutoffTimestamp))
-      .collect();
+      .withIndex("by_lastSeenAt", (q) => q.lt("lastSeenAt", args.cutoffTimestamp))
+      .filter((q) => q.eq(q.field("active"), true))
+      .take(2000);
 
     for (const p of stale) {
       await ctx.db.patch(p._id, { active: false });
     }
-    return stale.length;
+    return { deactivated: stale.length, mayHaveMore: stale.length === 2000 };
   },
 });
 
