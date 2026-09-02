@@ -19,7 +19,8 @@ const CASEKING_CONVEX_URL =
   "https://trustworthy-possum-230.eu-west-1.convex.cloud";
 
 const LIVE = process.env.LIVE === "true";
-const LIMIT = process.env.LIMIT ? parseInt(process.env.LIMIT, 10) : null;
+const LIMIT_RAW = (process.env.LIMIT || "").trim().toLowerCase();
+const LIMIT = LIMIT_RAW && LIMIT_RAW !== "all" ? parseInt(LIMIT_RAW, 10) : null;
 
 // Дефолти, ИДЕНТИЧНИ с тези, които техният собствен admin.js import панел
 // ползва, когато липсват данни - за консистентност с останалите продукти
