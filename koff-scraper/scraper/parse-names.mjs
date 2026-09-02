@@ -73,4 +73,27 @@ export function parseProductName(name, manufacturer) {
     }
   } else {
     modelSegment = "";
-    productLine = parts.length > 1 ?
+    productLine = parts.length > 1 ? parts[1] : "";
+  }
+
+  let models = [];
+  let rawModelSegment = "";
+
+  if (modelSegment && looksLikeDeviceModel(modelSegment)) {
+    const cleaned = modelSegment.replace(/^for\s+/i, "");
+    models = cleaned
+      .split("/")
+      .map((m) => m.trim())
+      .filter(Boolean);
+    rawModelSegment = modelSegment;
+  } else if (modelSegment) {
+    // моделният сегмент всъщност е спецификация (кабел, зарядно и т.н.)
+    if (!productLine) {
+      productLine = modelSegment;
+    } else {
+      productLine = `${productLine} - ${modelSegment}`;
+    }
+  }
+
+  return { productLine, models, color, rawModelSegment };
+}
