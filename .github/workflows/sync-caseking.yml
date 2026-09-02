@@ -14,7 +14,7 @@ on:
           - 'false'
           - 'true'
       limit:
-        description: 'Лимит суровини продукти за тест (напр. 5). Празно = всички.'
+        description: 'Лимит суровини продукти (напр. 5). За ПЪЛЕН run напиши думата: all'
         required: false
         default: '5'
 
