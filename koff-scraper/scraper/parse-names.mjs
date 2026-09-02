@@ -8,7 +8,7 @@ const DEVICE_KEYWORDS = [
   "samsung", "galaxy", "buds",
   "xiaomi", "redmi", "poco", "mi ",
   "honor", "huawei", "mate", "nova",
-  "oneplus", "nothing phone",
+  "oneplus", "nothing phone", "nothing cmf",
   "google", "pixel",
   "oppo", "reno", "realme", "narzo", "gt ",
   "vivo", "iqoo",
@@ -30,7 +30,19 @@ function looksLikeDeviceModel(segment) {
 }
 
 export function parseProductName(name, manufacturer) {
-  const parts = name.split(" - ").map((p) => p.trim());
+  // Нормализираме non-breaking space (\u00a0) към обикновен интервал -
+  // koff.ro понякога го ползва вместо истински space, което чупи простото
+  // разделяне по " - ".
+  const cleanName = name.replace(/\u00a0/g, " ");
+
+  // Разделяме по тире, толерантно към липсващ интервал от ЕДНАТА страна
+  // (напр. "G47- Black" без интервал преди тирето) - изискваме интервал
+  // поне от едната страна, за да не чупим съставни думи без интервали изобщо
+  // (напр. "Anti-Peep", "In-Ear").
+  const parts = cleanName
+    .split(/\s+-\s*|\s*-\s+/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
 
   if (parts.length < 2) {
     return { productLine: name, models: [], color: "", rawModelSegment: "" };
