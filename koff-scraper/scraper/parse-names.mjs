@@ -19,7 +19,7 @@ const DEVICE_KEYWORDS = [
   "infinix", "tecno", "spark", "hot 4", "hot 5",
   "itel", "zte", "nubia", "meizu",
   "blackview", "doogee", "ulefone", "cubot", "oukitel", "umidigi",
-  "alcatel", "cat s", "asus", "rog phone", "lg ", "fairphone",
+  "alcatel", "cat s", "asus", "rog phone", "lg ", "fairphone", "tcl",
   "garmin", "fenix", "instinct", "forerunner", "approach",
   "amazfit", "lenovo", "tesla model",
 ];

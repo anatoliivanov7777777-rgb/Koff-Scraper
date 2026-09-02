@@ -2,6 +2,7 @@
 // Няма нужда от Playwright/headless browser - сайтът е Vue SPA, но
 // цялата данни идват от чисти JSON endpoint-и, които викаме директно.
 
+import fs from "fs";
 import { generateExports } from "./generate-exports.mjs";
 
 // Папка, в която се записват готовите .xlsx файлове за импорт в case-king.bg
@@ -373,6 +374,12 @@ async function main() {
   console.log("Генерирам Excel файлове за импорт в case-king.bg...");
   const withPrices = payload.map(withDisplayPrices);
   generateExports(withPrices, EXPORT_OUT_DIR);
+
+  console.log("Записвам суровите продукти в koff-products-raw.json...");
+  fs.writeFileSync(
+    `${EXPORT_OUT_DIR}/koff-products-raw.json`,
+    JSON.stringify(payload)
+  );
 
   console.log("Готово!");
 }
