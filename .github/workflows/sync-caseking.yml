@@ -1,0 +1,47 @@
+name: Sync to case-king.bg
+
+# Само РЪЧНО пускане - никога автоматично, докато не сме сигурни, че
+# всичко работи коректно на живия сайт.
+on:
+  workflow_dispatch:
+    inputs:
+      live:
+        description: 'LIVE (true = реален запис в case-king.bg, false = само преглед)'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+      limit:
+        description: 'Лимит суровини продукти за тест (напр. 5). Празно = всички.'
+        required: false
+        default: '5'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: koff-scraper/scraper
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run koff.ro scraper (генерира koff-products-raw.json)
+        env:
+          KOFF_EMAIL: ${{ secrets.KOFF_EMAIL }}
+          KOFF_PASSWORD: ${{ secrets.KOFF_PASSWORD }}
+          CONVEX_HTTP_URL: ${{ secrets.CONVEX_HTTP_URL }}
+          SCRAPER_SECRET: ${{ secrets.SCRAPER_SECRET }}
+        run: npm run scrape
+
+      - name: Sync to case-king.bg
+        env:
+          LIVE: ${{ github.event.inputs.live }}
+          LIMIT: ${{ github.event.inputs.limit }}
+        run: node sync-caseking.mjs
