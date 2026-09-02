@@ -93,15 +93,27 @@ function extractRoot(model) {
 }
 
 // Маха скобни групи, които или (а) съдържат "/" вътре в себе си (списък с
-// размери/варианти като "(38/40/41/42mm)"), или (б) са чисто размер в мм
-// (напр. "(42mm)") - и двата вида не носят стойност като част от модела и
-// чупят простото разделяне по "/".
+// размери/варианти като "(38/40/41/42mm)"), или (б) са размер/списък от
+// размери в мм, евентуално разделени със запетая (напр. "(42mm)" или
+// "(41mm, 45mm)") - тези не носят стойност като част от модела и чупят
+// простото разделяне по "/" и ",".
 function stripSizeParens(s) {
   return s.replace(/\(([^()]*)\)/g, (whole, inner) => {
     if (inner.includes("/")) return "";
-    if (/^\s*\d+\s*mm\s*$/i.test(inner)) return "";
+    if (/^(\d+\s*mm\s*[,/]?\s*)+$/i.test(inner.trim())) return "";
     return whole; // друг вид скоба (SKU, година и т.н.) - пазим я
   });
+}
+
+// Технически спецификации (тип конектор, мощност, дължина и т.н.), които
+// koff.ro понякога добавя със запетая СЛЕД списъка с устройства в едно и
+// също поле (напр. "...Watch 5/6, USB, 3.5W, 1m"). Не са модели на
+// устройство и не трябва да генерират отделен ред.
+const SPEC_TOKEN_RE =
+  /^(usb(-c)?|micro\s?usb|type-?c|lightning|\d+(\.\d+)?\s*(w|v|a|mm|cm|m|g|mah|hz))$/i;
+
+function looksLikeSpecOnly(group) {
+  return !group.includes("/") && SPEC_TOKEN_RE.test(group.trim());
 }
 
 function processSlashGroup(text) {
@@ -114,7 +126,14 @@ function processSlashGroup(text) {
   let currentBrand = "";
   let currentRoot = "";
 
-  for (const part of parts) {
+  for (let part of parts) {
+    // Премахваме водещ SKU код в скоби (напр. "(AMP11577) Apple Watch 4"),
+    // който koff.ro понякога залепя точно пред списъка с модели вместо
+    // към продуктовата линия - иначе чупи разпознаването на марка/корен
+    // за целия остатък от списъка.
+    part = part.replace(/^\([^()]*\)\s*/, "").trim();
+    if (!part) continue;
+
     if (BARE_FRAGMENT_RE.test(part)) {
       const combined = currentRoot ? `${currentRoot} ${part}` : part;
       results.push({ brand: currentBrand, model: normalizeSuffixes(combined) });
@@ -143,6 +162,7 @@ export function extractBrandModelsFromFullSegment(fullSegment) {
 
   let results = [];
   for (const group of commaGroups) {
+    if (looksLikeSpecOnly(group)) continue; // напр. "USB", "Type-C", "3.5W", "1m"
     results = results.concat(processSlashGroup(group));
   }
   return results;
