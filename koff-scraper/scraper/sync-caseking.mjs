@@ -12,6 +12,7 @@ import fs from "fs";
 import { CATEGORY_MAP } from "./category-map.mjs";
 import { parseProductName } from "./parse-names.mjs";
 import { extractBrandModelsFromFullSegment } from "./brand-model.mjs";
+import { calcB2BPrice, calcB2CPrice } from "./pricing.mjs";
 
 const CASEKING_CONVEX_URL =
   process.env.CASEKING_CONVEX_URL ||
@@ -19,9 +20,6 @@ const CASEKING_CONVEX_URL =
 
 const LIVE = process.env.LIVE === "true";
 const LIMIT = process.env.LIMIT ? parseInt(process.env.LIMIT, 10) : null;
-
-const B2B_MARKUP = 1.6;
-const B2C_MARKUP = 1.8;
 
 // Дефолти, ИДЕНТИЧНИ с тези, които техният собствен admin.js import панел
 // ползва, когато липсват данни - за консистентност с останалите продукти
@@ -48,8 +46,8 @@ function buildCaseKingProducts(raw, categorySlug) {
     .join(" - ");
 
   const base = raw.basePrice;
-  const priceB2B = Math.round(base * B2B_MARKUP * 100) / 100;
-  const priceB2C = Math.round(base * B2C_MARKUP * 100) / 100;
+  const priceB2B = calcB2BPrice(base);
+  const priceB2C = calcB2CPrice(base);
 
   const description =
     (raw.description && raw.description.trim()) ||

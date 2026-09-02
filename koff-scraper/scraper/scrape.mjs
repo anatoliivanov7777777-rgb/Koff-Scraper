@@ -4,6 +4,7 @@
 
 import fs from "fs";
 import { generateExports } from "./generate-exports.mjs";
+import { calcB2BPrice, calcB2CPrice } from "./pricing.mjs";
 
 // Папка, в която се записват готовите .xlsx файлове за импорт в case-king.bg
 // (GitHub Actions ги качва като "artifact" след всеки run - виж workflow-а).
@@ -231,10 +232,6 @@ async function scrapeCategoryProducts(categoryId) {
   return products;
 }
 
-// Трябва да съвпадат ТОЧНО с B2B_MARKUP/B2C_MARKUP в convex/products.ts
-const B2B_MARKUP = 1.6;
-const B2C_MARKUP = 1.8;
-
 function mapToConvexProduct(raw, categoryName) {
   const base = raw.salePrice ?? raw.basePrice;
 
@@ -258,8 +255,8 @@ function mapToConvexProduct(raw, categoryName) {
 function withDisplayPrices(product) {
   return {
     ...product,
-    priceB2B: Math.round(product.basePrice * B2B_MARKUP * 100) / 100,
-    priceB2C: Math.round(product.basePrice * B2C_MARKUP * 100) / 100,
+    priceB2B: calcB2BPrice(product.basePrice),
+    priceB2C: calcB2CPrice(product.basePrice),
   };
 }
 
