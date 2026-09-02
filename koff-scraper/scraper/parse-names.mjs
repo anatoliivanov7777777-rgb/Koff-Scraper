@@ -7,7 +7,7 @@ const DEVICE_KEYWORDS = [
   "iphone", "ipad", "macbook", "airpods", "apple watch",
   "samsung", "galaxy", "buds",
   "xiaomi", "redmi", "poco", "mi ",
-  "honor", "huawei", "mate", "nova",
+  "honor", "huawei", "mate ", "nova",
   "oneplus", "nothing phone", "nothing cmf",
   "google", "pixel",
   "oppo", "reno", "realme", "narzo", "gt ",
@@ -24,9 +24,18 @@ const DEVICE_KEYWORDS = [
   "amazfit", "lenovo", "tesla model",
 ];
 
+// Изграждаме regex-и с истинска граница на думата (\b...\b) от двете
+// страни за всяка ключова дума - това предпазва от случайни съвпадения
+// вътре в други думи (напр. "mate" вътре в "material", "mi" вътре в
+// "HDMI", "band" вътре в "Headband"), които при обикновено .includes()
+// биха минали погрешно.
+const DEVICE_KEYWORD_PATTERNS = DEVICE_KEYWORDS.map((kw) => {
+  const escaped = kw.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\b${escaped}\\b`, "i");
+});
+
 function looksLikeDeviceModel(segment) {
-  const s = segment.toLowerCase();
-  return DEVICE_KEYWORDS.some((kw) => s.includes(kw));
+  return DEVICE_KEYWORD_PATTERNS.some((re) => re.test(segment));
 }
 
 export function parseProductName(name, manufacturer) {
@@ -64,27 +73,4 @@ export function parseProductName(name, manufacturer) {
     }
   } else {
     modelSegment = "";
-    productLine = parts.length > 1 ? parts[1] : "";
-  }
-
-  let models = [];
-  let rawModelSegment = "";
-
-  if (modelSegment && looksLikeDeviceModel(modelSegment)) {
-    const cleaned = modelSegment.replace(/^for\s+/i, "");
-    models = cleaned
-      .split("/")
-      .map((m) => m.trim())
-      .filter(Boolean);
-    rawModelSegment = modelSegment;
-  } else if (modelSegment) {
-    // моделният сегмент всъщност е спецификация (кабел, зарядно и т.н.)
-    if (!productLine) {
-      productLine = modelSegment;
-    } else {
-      productLine = `${productLine} - ${modelSegment}`;
-    }
-  }
-
-  return { productLine, models, color, rawModelSegment };
-}
+    productLine = parts.length > 1 ?
