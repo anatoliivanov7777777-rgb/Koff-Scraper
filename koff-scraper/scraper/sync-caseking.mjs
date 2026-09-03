@@ -134,17 +134,14 @@ async function runBackfillMigration(convex) {
 }
 
 async function runCleanup(convex) {
-  console.log(`\nCLEANUP режим - изтривам всичко със source="${SOURCE_TAG}"...`);
+  console.log(`\nCLEANUP режим - изтривам АБСОЛЮТНО ВСИЧКИ продукти, марки и модели...`);
 
   console.log("Изтривам продукти...");
   let cursor = null;
   let isDone = false;
   let totalDeleted = 0;
   while (!isDone) {
-    const res = await convex.mutation("products:deleteProductsBySource", {
-      source: SOURCE_TAG,
-      cursor,
-    });
+    const res = await convex.mutation("products:deleteAllProductsPaginated", { cursor });
     totalDeleted += res.deleted;
     isDone = res.isDone;
     cursor = res.continueCursor;
@@ -152,11 +149,11 @@ async function runCleanup(convex) {
   }
 
   console.log("Изтривам марки...");
-  const brandsRes = await convex.mutation("meta:deleteBrandsBySource", { source: SOURCE_TAG });
+  const brandsRes = await convex.mutation("meta:clearAllBrands", {});
   console.log(`  изтрити марки: ${brandsRes.deleted}`);
 
   console.log("Изтривам модели...");
-  const modelsRes = await convex.mutation("meta:deleteModelsBySource", { source: SOURCE_TAG });
+  const modelsRes = await convex.mutation("meta:clearAllModels", {});
   console.log(`  изтрити модели: ${modelsRes.deleted}`);
 
   console.log(
