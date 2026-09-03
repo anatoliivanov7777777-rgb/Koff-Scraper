@@ -17,6 +17,14 @@ on:
         description: 'Лимит суровини продукти (напр. 5). За ПЪЛЕН run напиши думата: all'
         required: false
         default: '5'
+      cleanup:
+        description: 'CLEANUP (true = ИЗТРИВА всичко със source=koff-sync, без да качва нищо ново)'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 jobs:
   sync:
@@ -33,6 +41,7 @@ jobs:
         run: npm install
 
       - name: Run koff.ro scraper (генерира koff-products-raw.json)
+        if: github.event.inputs.cleanup != 'true'
         env:
           KOFF_EMAIL: ${{ secrets.KOFF_EMAIL }}
           KOFF_PASSWORD: ${{ secrets.KOFF_PASSWORD }}
@@ -44,4 +53,5 @@ jobs:
         env:
           LIVE: ${{ github.event.inputs.live }}
           LIMIT: ${{ github.event.inputs.limit }}
+          CLEANUP: ${{ github.event.inputs.cleanup }}
         run: node sync-caseking.mjs
