@@ -65,8 +65,41 @@ function normalizeSuffixes(s) {
   out = out.replace(/\bfe\b/gi, "FE");
   out = out.replace(/\bse\b/gi, "SE");
   out = out.replace(/(\d)g\b/g, "$1G"); // 5g -> 5G
+  // Маха "заседнал" SKU код в скоби в края (напр. "iPhone 15 Plus
+  // (BMHCP15M23PSCCK)" -> "iPhone 15 Plus"). Изисква поне една ГЛАВНА
+  // буква вътре, за да не пипа легитимни неща като "(2021)" (година).
+  out = out.replace(/\s*\([A-Z][A-Z0-9]{3,}\)\s*$/, "");
   out = out.replace(/\s+/g, " ").trim();
   return out;
+}
+
+// Марки, които правят и телефони, и часовници - когато устройството е
+// часовник, ползваме ОТДЕЛНО име на марката (напр. "Apple Watch" вместо
+// просто "Apple"), защото сайтът показва Марка/Модел като ЕДИН общ филтър
+// (не разделен по категория) - иначе часовниковите модели се смесват с
+// телефонните в същия падащ списък.
+const WATCH_BRAND_MAP = {
+  Apple: "Apple Watch",
+  Samsung: "Samsung Watch",
+  Xiaomi: "Xiaomi Watch",
+  Google: "Google Watch",
+  Huawei: "Huawei Watch",
+  Honor: "Honor Watch",
+};
+
+const WATCH_TEXT_RE = /\bwatch|\bband\b|\bfenix\b|\binstinct\b|\bforerunner\b|\bapproach\b|\bgtr\b|\bgts\b/i;
+
+// Марки, чиито продукти са ИЗЦЯЛО часовници/фитнес гривни - винаги watch,
+// без значение от текста.
+const WATCH_ONLY_BRANDS = new Set(["Garmin", "Amazfit"]);
+
+export function isWatchDevice(text, brand) {
+  if (WATCH_ONLY_BRANDS.has(brand)) return true;
+  return WATCH_TEXT_RE.test(text);
+}
+
+export function remapWatchBrand(brand) {
+  return WATCH_BRAND_MAP[brand] || brand;
 }
 
 function extractBrandModel(deviceSegment) {
@@ -126,6 +159,7 @@ function processSlashGroup(text) {
   const results = [];
   let currentBrand = "";
   let currentRoot = "";
+  let currentIsWatch = false;
 
   for (let part of parts) {
     // Премахваме водещ SKU код в скоби (напр. "(AMP11577) Apple Watch 4"),
@@ -135,17 +169,38 @@ function processSlashGroup(text) {
     part = part.replace(/^\([^()]*\)\s*/, "").trim();
     if (!part) continue;
 
-    if (BARE_FRAGMENT_RE.test(part)) {
-      const combined = currentRoot ? `${currentRoot} ${part}` : part;
-      results.push({ brand: currentBrand, model: normalizeSuffixes(combined) });
+    const { brand: rawBrand, model: rawModel } = extractBrandModel(part);
+
+    if (rawBrand) {
+      // Изрично обявен нов елемент с разпозната марка
+      currentBrand = rawBrand;
+      const root = extractRoot(rawModel);
+      if (root) currentRoot = root;
+      currentIsWatch = isWatchDevice(part, rawBrand);
+
+      const finalBrand = currentIsWatch ? remapWatchBrand(currentBrand) : currentBrand;
+      results.push({
+        brand: finalBrand,
+        model: normalizeSuffixes(rawModel),
+        isWatch: currentIsWatch,
+      });
       continue;
     }
 
-    const { brand, model } = extractBrandModel(part);
-    if (brand) currentBrand = brand;
-    const root = extractRoot(model);
-    if (root) currentRoot = root;
-    results.push({ brand: brand || currentBrand, model: normalizeSuffixes(model) });
+    // Няма собствена марка в текста - продължение на предходния елемент
+    // (напр. "2", "SE", "Ultra" след "Apple Watch 1"). Наследява марка и
+    // watch статус. Голите числа допълнително се "сглобяват" с корена
+    // на предходния модел (напр. "2" -> "Watch 2").
+    let modelText = rawModel;
+    if (BARE_FRAGMENT_RE.test(part)) {
+      modelText = currentRoot ? `${currentRoot} ${part}` : part;
+    }
+    const finalBrand = currentIsWatch ? remapWatchBrand(currentBrand) : currentBrand;
+    results.push({
+      brand: finalBrand,
+      model: normalizeSuffixes(modelText),
+      isWatch: currentIsWatch,
+    });
   }
 
   return results;

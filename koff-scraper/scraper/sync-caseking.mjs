@@ -4,8 +4,14 @@
 //
 // БЕЗОПАСНОСТ: пише директно в ЖИВАТА база данни на реалния сайт. По
 // подразбиране работи в DRY RUN режим (нищо не се записва, само показва
-// какво би направил). За реален запис: LIVE=true node sync-caseking.mjs
-// За тест с малка част: LIMIT=10 LIVE=true node sync-caseking.mjs
+// какво би направил).
+//
+// Употреба:
+//   LIVE=true node sync-caseking.mjs                 - реален пълен sync
+//   LIMIT=10 LIVE=true node sync-caseking.mjs         - тест с малка част
+//   CLEANUP=true LIVE=true node sync-caseking.mjs     - изтрива ВСИЧКО,
+//     маркирано с source="koff-sync" (продукти, марки, модели), БЕЗ да
+//     качва нищо ново - за чист рестарт след поправка на логиката.
 
 import { ConvexHttpClient } from "convex/browser";
 import fs from "fs";
@@ -19,12 +25,20 @@ const CASEKING_CONVEX_URL =
   "https://trustworthy-possum-230.eu-west-1.convex.cloud";
 
 const LIVE = process.env.LIVE === "true";
+const CLEANUP = process.env.CLEANUP === "true";
 const LIMIT_RAW = (process.env.LIMIT || "").trim().toLowerCase();
 const LIMIT = LIMIT_RAW && LIMIT_RAW !== "all" ? parseInt(LIMIT_RAW, 10) : null;
 
-// Дефолти, ИДЕНТИЧНИ с тези, които техният собствен admin.js import панел
-// ползва, когато липсват данни - за консистентност с останалите продукти
-// в базата им.
+// Маркер, слаган на всичко, създадено от този скрипт - позволява
+// безопасно, целенасочено изтриване/презапис само на автоматично
+// синхронизираните данни, без да пипа ръчно въведени продукти.
+const SOURCE_TAG = "koff-sync";
+
+// Категорията, в която отиват всички часовникови аксесоари (гривни,
+// зарядни, калъфи за смарт часовници) - ОТДЕЛНО от телефонните категории,
+// за да не се смесват в глобалния филтър Марка/Модел.
+const WATCH_CATEGORY_SLUG = "aksesoari_chasovnici";
+
 const DEFAULT_SPECS = {
   material: "Премиум силикон / TPU / Кожа",
   weight: "30г",
@@ -36,9 +50,6 @@ function norm(s) {
   return (s || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
 }
 
-// Превръща един суров koff.ro продукт в 1 или повече готови за case-king.bg
-// продуктови обекта (по един на всеки съвместим модел, ако продуктът пасва
-// на няколко устройства).
 function buildCaseKingProducts(raw, categorySlug) {
   const parsed = parseProductName(raw.name || "", raw.manufacturer);
   const color = parsed.color;
@@ -56,7 +67,6 @@ function buildCaseKingProducts(raw, categorySlug) {
 
   const commonFields = {
     id: null,
-    category: categorySlug,
     image: raw.imageUrl || "assets/logo.webp",
     images: raw.imageUrl ? [raw.imageUrl] : [],
     rating: 5,
@@ -67,6 +77,7 @@ function buildCaseKingProducts(raw, categorySlug) {
     oldPriceB2C: null,
     priceB2B,
     oldPriceB2B: null,
+    source: SOURCE_TAG,
   };
 
   let brandModels = [];
@@ -80,6 +91,7 @@ function buildCaseKingProducts(raw, categorySlug) {
     return [
       {
         ...commonFields,
+        category: categorySlug,
         name: baseTitle,
         brand: "Всички марки",
         model: "Всички модели",
@@ -87,7 +99,6 @@ function buildCaseKingProducts(raw, categorySlug) {
     ];
   }
 
-  // Премахваме дубликати (брандMoves) в рамките на един продукт
   const seen = new Set();
   const unique = [];
   for (const bm of brandModels) {
@@ -100,6 +111,7 @@ function buildCaseKingProducts(raw, categorySlug) {
 
   return unique.map((bm) => ({
     ...commonFields,
+    category: bm.isWatch ? WATCH_CATEGORY_SLUG : categorySlug,
     name: baseTitle,
     brand: bm.brand,
     model: bm.model,
@@ -117,15 +129,54 @@ async function runBackfillMigration(convex) {
     totalUpdated += res.updated;
     isDone = res.isDone;
     cursor = res.continueCursor;
-    if (totalUpdated % 1000 < 200) {
-      console.log(`  мигрирани дотук: ${totalUpdated}`);
-    }
   }
   console.log(`Миграция готова. Общо мигрирани: ${totalUpdated}`);
 }
 
+async function runCleanup(convex) {
+  console.log(`\nCLEANUP режим - изтривам всичко със source="${SOURCE_TAG}"...`);
+
+  console.log("Изтривам продукти...");
+  let cursor = null;
+  let isDone = false;
+  let totalDeleted = 0;
+  while (!isDone) {
+    const res = await convex.mutation("products:deleteProductsBySource", {
+      source: SOURCE_TAG,
+      cursor,
+    });
+    totalDeleted += res.deleted;
+    isDone = res.isDone;
+    cursor = res.continueCursor;
+    console.log(`  изтрити продукти дотук: ${totalDeleted}`);
+  }
+
+  console.log("Изтривам марки...");
+  const brandsRes = await convex.mutation("meta:deleteBrandsBySource", { source: SOURCE_TAG });
+  console.log(`  изтрити марки: ${brandsRes.deleted}`);
+
+  console.log("Изтривам модели...");
+  const modelsRes = await convex.mutation("meta:deleteModelsBySource", { source: SOURCE_TAG });
+  console.log(`  изтрити модели: ${modelsRes.deleted}`);
+
+  console.log(
+    `\nCLEANUP готово: ${totalDeleted} продукта, ${brandsRes.deleted} марки, ${modelsRes.deleted} модела изтрити.`
+  );
+}
+
 async function main() {
-  console.log(`Режим: ${LIVE ? "LIVE (ще записва в базата!)" : "DRY RUN (само преглед)"}`);
+  console.log(`Режим: ${LIVE ? "LIVE" : "DRY RUN (само преглед)"}${CLEANUP ? " + CLEANUP" : ""}`);
+
+  if (CLEANUP) {
+    if (!LIVE) {
+      console.log("CLEANUP изисква и LIVE=true. Нищо не е направено.");
+      return;
+    }
+    const convex = new ConvexHttpClient(CASEKING_CONVEX_URL);
+    await runCleanup(convex);
+    return;
+  }
+
   if (LIMIT) console.log(`Лимит за тест: първите ${LIMIT} суровини продукта`);
 
   const raw = fs.readFileSync("./koff-products-raw.json", "utf-8");
@@ -137,11 +188,14 @@ async function main() {
   const caseKingProducts = [];
   for (const p of rawProducts) {
     const slug = CATEGORY_MAP[norm(p.category)];
-    if (!slug) continue; // все още не мапната категория - пропускаме засега
+    if (!slug) continue;
     caseKingProducts.push(...buildCaseKingProducts(p, slug));
   }
 
-  console.log(`Генерирани case-king.bg продуктови реда: ${caseKingProducts.length}`);
+  const watchRows = caseKingProducts.filter((p) => p.category === WATCH_CATEGORY_SLUG).length;
+  console.log(
+    `Генерирани case-king.bg продуктови реда: ${caseKingProducts.length} (от които ${watchRows} часовникови)`
+  );
   console.log("Примерни 3 реда:");
   console.log(JSON.stringify(caseKingProducts.slice(0, 3), null, 2));
 
@@ -161,6 +215,14 @@ async function main() {
     convex.query("meta:getModels"),
   ]);
 
+  const catIds = new Set(existingCats.map((c) => c.id));
+  if (!catIds.has(WATCH_CATEGORY_SLUG)) {
+    console.warn(
+      `\n⚠️  ВНИМАНИЕ: категория "${WATCH_CATEGORY_SLUG}" НЕ съществува още в case-king.bg! ` +
+        `Часовниковите продукти ще се качат, но няма да се показват никъде, докато категорията не бъде създадена.`
+    );
+  }
+
   const brandsCache = new Set(existingBrands.map((b) => b.name.toLowerCase()));
   const modelsCache = new Set(
     existingModels.map((m) => `${m.brand.toLowerCase()}:${m.name.toLowerCase()}`)
@@ -178,7 +240,8 @@ async function main() {
       if (!brandsCache.has(brandLower)) {
         await convex.mutation("meta:addBrand", {
           name: p.brand,
-          logo: `logo_${brandLower}.webp`,
+          logo: `logo_${brandLower.replace(/\s+/g, "_")}.webp`,
+          source: SOURCE_TAG,
         });
         brandsCache.add(brandLower);
         newBrands++;
@@ -187,7 +250,11 @@ async function main() {
       if (p.model !== "Всички модели") {
         const modelKey = `${brandLower}:${p.model.toLowerCase()}`;
         if (!modelsCache.has(modelKey)) {
-          await convex.mutation("meta:addModel", { brand: p.brand, name: p.model });
+          await convex.mutation("meta:addModel", {
+            brand: p.brand,
+            name: p.model,
+            source: SOURCE_TAG,
+          });
           modelsCache.add(modelKey);
           newModels++;
         }
