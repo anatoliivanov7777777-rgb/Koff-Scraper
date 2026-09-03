@@ -106,6 +106,24 @@ function buildCaseKingProducts(raw, categorySlug) {
   }));
 }
 
+async function runBackfillMigration(convex) {
+  console.log("Мигрирам съществуващите продукти (matchKey за бърз индекс)...");
+  let cursor = null;
+  let totalUpdated = 0;
+  let isDone = false;
+
+  while (!isDone) {
+    const res = await convex.mutation("products:backfillMatchKeys", { cursor });
+    totalUpdated += res.updated;
+    isDone = res.isDone;
+    cursor = res.continueCursor;
+    if (totalUpdated % 1000 < 200) {
+      console.log(`  мигрирани дотук: ${totalUpdated}`);
+    }
+  }
+  console.log(`Миграция готова. Общо мигрирани: ${totalUpdated}`);
+}
+
 async function main() {
   console.log(`Режим: ${LIVE ? "LIVE (ще записва в базата!)" : "DRY RUN (само преглед)"}`);
   if (LIMIT) console.log(`Лимит за тест: първите ${LIMIT} суровини продукта`);
@@ -133,6 +151,8 @@ async function main() {
   }
 
   const convex = new ConvexHttpClient(CASEKING_CONVEX_URL);
+
+  await runBackfillMigration(convex);
 
   console.log("\nЗареждам съществуващи категории/марки/модели от case-king.bg...");
   const [existingCats, existingBrands, existingModels] = await Promise.all([
