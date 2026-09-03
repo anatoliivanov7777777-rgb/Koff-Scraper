@@ -65,6 +65,7 @@ function normalizeSuffixes(s) {
   out = out.replace(/\bfe\b/gi, "FE");
   out = out.replace(/\bse\b/gi, "SE");
   out = out.replace(/(\d)g\b/g, "$1G"); // 5g -> 5G
+  out = out.replace(/(\d)\+(?!\d)/g, "$1 Plus"); // 15+ -> 15 Plus (същия модел като "15 Plus")
   // Маха "заседнал" SKU код в скоби в края (напр. "iPhone 15 Plus
   // (BMHCP15M23PSCCK)" -> "iPhone 15 Plus"). Изисква поне една ГЛАВНА
   // буква вътре, за да не пипа легитимни неща като "(2021)" (година).
@@ -188,12 +189,14 @@ function processSlashGroup(text) {
     }
 
     // Няма собствена марка в текста - продължение на предходния елемент
-    // (напр. "2", "SE", "Ultra" след "Apple Watch 1"). Наследява марка и
-    // watch статус. Голите числа допълнително се "сглобяват" с корена
-    // на предходния модел (напр. "2" -> "Watch 2").
+    // (напр. "8", "9 41mm", "6 Plus", "6s", "SE", "Ultra" след предходен
+    // модел). Ако фрагментът ЗАПОЧВА С ЦИФРА, значи е "гола" продължение
+    // без собствено име на устройство - "сглобяваме" го с корена на
+    // предходния модел (напр. "8" -> "Watch 8", "6s" -> "iPhone 6s").
+    // Фрагменти, започващи с буква (SE, Ultra), вече са самодостатъчни.
     let modelText = rawModel;
-    if (BARE_FRAGMENT_RE.test(part)) {
-      modelText = currentRoot ? `${currentRoot} ${part}` : part;
+    if (/^\d/.test(part) && currentRoot) {
+      modelText = `${currentRoot} ${part}`;
     }
     const finalBrand = currentIsWatch ? remapWatchBrand(currentBrand) : currentBrand;
     results.push({
