@@ -35,7 +35,35 @@ const DEVICE_KEYWORD_PATTERNS = DEVICE_KEYWORDS.map((kw) => {
 });
 
 function looksLikeDeviceModel(segment) {
-  return DEVICE_KEYWORD_PATTERNS.some((re) => re.test(segment));
+  if (!DEVICE_KEYWORD_PATTERNS.some((re) => re.test(segment))) return false;
+
+  // Сегментът съдържа име на устройство, НО това не значи, че е списък с
+  // модели - koff.ro често описва техническите характеристики на
+  // универсални продукти (зарядни станции, стойки, портфейли) с изброяване
+  // на съвместими устройства, напр.:
+  //   "MagSafe, for iPhone/iWatch/Earbuds, 22.5W, Qi2"
+  //   "MagSafe Wallet, Card, AirPods Holder, Organizer, with Belt Holster"
+  // Такива сегменти НЕ описват конкретен модел и не трябва да генерират
+  // фалшиви записи в списъка с модели.
+
+  // 1. Технически спецификации (мощност, стандарти, размери, портове) -
+  //    истинските моделни сегменти не съдържат такива.
+  if (/\d+(\.\d+)?\s*(W|V|A|mAh|Hz|dB|Pa|L)\b|\bQi2?\b|\bIPX?\d|\bBluetooth\b|\bV\d\.\d|\bANC\b|\bENC\b/i.test(segment)) {
+    return false;
+  }
+
+  // 2. Описателни думи, характерни за спецификация, не за модел.
+  if (/\b(with|Foldable|Organizer|Holster|Station|Technology|Wireless Charging|Detachable|Adjustable|Rotating|Retractable)\b/i.test(segment)) {
+    return false;
+  }
+
+  // 3. Водещо "for" + запетайка в сегмента => изброяване на съвместимост
+  //    в рамките на описание (а не чист списък с модели).
+  if (/^for\s+/i.test(segment) && segment.includes(",")) {
+    return false;
+  }
+
+  return true;
 }
 
 export function parseProductName(name, manufacturer) {

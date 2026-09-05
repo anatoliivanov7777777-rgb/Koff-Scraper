@@ -66,6 +66,10 @@ function normalizeSuffixes(s) {
   out = out.replace(/\bse\b/gi, "SE");
   out = out.replace(/(\d)g\b/g, "$1G"); // 5g -> 5G
   out = out.replace(/(\d)\+(?!\d)/g, "$1 Plus"); // 15+ -> 15 Plus (същия модел като "15 Plus")
+  // Уеднаквяване на изписването на iPhone (koff.ro смесва "Iphone"/"iphone")
+  out = out.replace(/\biphone\b/gi, "iPhone");
+  // "6S" -> "6s" (Apple официално пише малко 's' при S-моделите)
+  out = out.replace(/\b(\d)S\b/g, "$1s");
   // Маха "заседнал" SKU код в скоби в края (напр. "iPhone 15 Plus
   // (BMHCP15M23PSCCK)" -> "iPhone 15 Plus"). Изисква поне една ГЛАВНА
   // буква вътре, за да не пипа легитимни неща като "(2021)" (година).
@@ -93,6 +97,14 @@ const WATCH_TEXT_RE = /\bwatch|\bband\b|\bfenix\b|\binstinct\b|\bforerunner\b|\b
 // Марки, чиито продукти са ИЗЦЯЛО часовници/фитнес гривни - винаги watch,
 // без значение от текста.
 const WATCH_ONLY_BRANDS = new Set(["Garmin", "Amazfit"]);
+
+// Устройства, които НЕ са телефони и НЕ са часовници (лаптопи, слушалки,
+// таблети). Не трябва да попадат в телефонния списък с модели.
+const NON_PHONE_DEVICE_RE = /\b(macbook|airpods|earbuds|buds|ipad|laptop|notebook|tablet)\b|\btab\s|^tab\b|\bwatch charger\b|\bcharger\b/i;
+
+export function isNonPhoneDevice(text) {
+  return NON_PHONE_DEVICE_RE.test(text);
+}
 
 export function isWatchDevice(text, brand) {
   if (WATCH_ONLY_BRANDS.has(brand)) return true;
@@ -160,6 +172,7 @@ function processSlashGroup(text) {
   const results = [];
   let currentBrand = "";
   let currentRoot = "";
+  let currentFullModel = "";
   let currentIsWatch = false;
 
   for (let part of parts) {
@@ -172,11 +185,18 @@ function processSlashGroup(text) {
 
     const { brand: rawBrand, model: rawModel } = extractBrandModel(part);
 
+    // Лаптопи, слушалки, таблети - НЕ са телефони и не бива да влизат в
+    // телефонния списък с модели (koff.ro ги смесва в същото поле).
+    if (isNonPhoneDevice(part)) {
+      continue;
+    }
+
     if (rawBrand) {
       // Изрично обявен нов елемент с разпозната марка
       currentBrand = rawBrand;
       const root = extractRoot(rawModel);
       if (root) currentRoot = root;
+      currentFullModel = normalizeSuffixes(rawModel);
       currentIsWatch = isWatchDevice(part, rawBrand);
 
       const finalBrand = currentIsWatch ? remapWatchBrand(currentBrand) : currentBrand;
@@ -188,20 +208,41 @@ function processSlashGroup(text) {
       continue;
     }
 
-    // Няма собствена марка в текста - продължение на предходния елемент
-    // (напр. "8", "9 41mm", "6 Plus", "6s", "SE", "Ultra" след предходен
-    // модел). Ако фрагментът ЗАПОЧВА С ЦИФРА, значи е "гола" продължение
-    // без собствено име на устройство - "сглобяваме" го с корена на
-    // предходния модел (напр. "8" -> "Watch 8", "6s" -> "iPhone 6s").
-    // Фрагменти, започващи с буква (SE, Ultra), вече са самодостатъчни.
+    // Няма собствена марка в текста - продължение на предходния елемент.
+    // Три вида продължения:
+    //  а) започващи с цифра ("8", "9 41mm", "6s") -> корен + част
+    //     ("iPhone 6s", "Watch 9 41mm")
+    //  б) чисти суфикси ("Max", "Pro Max", "5G") -> наследяват ПЪЛНИЯ
+    //     предходен модел без неговия суфикс ("iPhone 14 Pro" + "Max" ->
+    //     "iPhone 14 Max"), защото само коренът губи номера на модела.
+    // ВАЖНО: при ЧАСОВНИЦИ "Ultra"/"SE" СА валидни самостоятелни модели
+    // (Apple Watch Ultra, Apple Watch SE), затова там не ги сглобяваме.
+    const SUFFIX_ONLY_RE = currentIsWatch
+      ? /^(Pro|Plus|Max|Mini|Pro Max|Lite|Air|\d+G)$/i
+      : /^(Pro|Plus|Max|Mini|Ultra|Pro Max|FE|Lite|Air|\d+G)$/i;
+
     let modelText = rawModel;
-    if (/^\d/.test(part) && currentRoot) {
+    if (currentRoot && /^\d/.test(part)) {
       modelText = `${currentRoot} ${part}`;
+    } else if (!currentIsWatch && currentRoot && /^SE(\s+\d+)?$/i.test(part.trim())) {
+      // "SE" / "SE 2" при ТЕЛЕФОНИ означава "iPhone SE 2" (при часовници
+      // "SE" е самостоятелен модел и не се пипа).
+      modelText = `${currentRoot} ${part}`;
+    } else if (currentFullModel && SUFFIX_ONLY_RE.test(part.trim())) {
+      // махаме суфикса на предходния модел, за да не се трупат
+      // ("iPhone 14 Pro" -> база "iPhone 14", после + "Max")
+      const base = currentFullModel.replace(
+        /\s+(Pro Max|Pro|Plus|Max|Mini|Ultra|FE|Lite|Air|\d+G)$/i,
+        ""
+      );
+      modelText = `${base} ${part}`;
     }
+    const finalModel = normalizeSuffixes(modelText);
+    currentFullModel = finalModel;
     const finalBrand = currentIsWatch ? remapWatchBrand(currentBrand) : currentBrand;
     results.push({
       brand: finalBrand,
-      model: normalizeSuffixes(modelText),
+      model: finalModel,
       isWatch: currentIsWatch,
     });
   }

@@ -115,6 +115,9 @@ function buildCaseKingProducts(raw, categorySlug) {
     name: baseTitle,
     brand: bm.brand,
     model: bm.model,
+    // не се праща към Convex - ползва се само локално, за да знаем какъв
+    // type да зададем на марката/модела при създаването им
+    _isWatch: bm.isWatch,
   }));
 }
 
@@ -239,6 +242,7 @@ async function main() {
           name: p.brand,
           logo: `logo_${brandLower.replace(/\s+/g, "_")}.webp`,
           source: SOURCE_TAG,
+          type: p._isWatch ? "watch" : "phone",
         });
         brandsCache.add(brandLower);
         newBrands++;
@@ -251,6 +255,7 @@ async function main() {
             brand: p.brand,
             name: p.model,
             source: SOURCE_TAG,
+            type: p._isWatch ? "watch" : "phone",
           });
           modelsCache.add(modelKey);
           newModels++;
@@ -265,7 +270,9 @@ async function main() {
   let totalUpdated = 0;
   const CHUNK = 100;
   for (let i = 0; i < caseKingProducts.length; i += CHUNK) {
-    const chunk = caseKingProducts.slice(i, i + CHUNK);
+    const chunk = caseKingProducts
+      .slice(i, i + CHUNK)
+      .map(({ _isWatch, ...rest }) => rest);
     const res = await convex.mutation("products:upsertBatch", { products: chunk });
     totalCreated += res.createdCount || 0;
     totalUpdated += res.updatedCount || 0;
