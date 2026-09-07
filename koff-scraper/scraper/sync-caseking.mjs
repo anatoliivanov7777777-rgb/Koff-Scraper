@@ -95,6 +95,12 @@ function normalizeAccessoryBrand(name) {
   return ACCESSORY_BRAND_CANONICAL[n.toLowerCase()] || n;
 }
 
+// koff.ro дава цените БЕЗ ДДС. Надценките се начисляват върху база с
+// включено ДДС, затова умножаваме преди да извикаме pricing.mjs -
+// границите (0.60-8 лв за B2B, 2-12 лв за B2C) остават непроменени.
+const VAT_RATE = 0.20;
+const VAT_MULTIPLIER = 1 + VAT_RATE;
+
 const DEFAULT_SPECS = {
   material: "Премиум силикон / TPU / Кожа",
   weight: "30г",
@@ -175,7 +181,7 @@ function buildCaseKingProducts(raw, categorySlug) {
     .filter(Boolean)
     .join(" - ");
 
-  const base = raw.basePrice;
+  const base = raw.basePrice * VAT_MULTIPLIER;
   const priceB2B = calcB2BPrice(base);
   const priceB2C = calcB2CPrice(base);
 
