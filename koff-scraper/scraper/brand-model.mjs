@@ -54,6 +54,31 @@ const BRAND_RULES = [
   { re: /^Tesla\s+/i, brand: "Tesla", strip: /^Tesla\s+/i },
 ];
 
+// Ръчни поправки на модели, при които koff.ro ползва варианти/грешни
+// имена за едно и също устройство. Ключовете се сравняват без значение
+// на регистъра.
+const MODEL_CANONICAL = {
+  "iphone 10": "iPhone X",
+  "iphone 6 plus": "iPhone 6s Plus",
+};
+
+// Модели, които НЕ съществуват като реални устройства - koff.ro ги
+// генерира от неточни/съкратени описания. Отхвърлят се напълно.
+const INVALID_MODELS = new Set([
+  "iphone ultra",
+  "iphone magsafe",
+  "iphone 15 pro magsafe",
+]);
+
+function canonicalizeModel(model) {
+  const key = model.trim().toLowerCase();
+  return MODEL_CANONICAL[key] || model;
+}
+
+export function isInvalidModel(model) {
+  return INVALID_MODELS.has(model.trim().toLowerCase());
+}
+
 function normalizeSuffixes(s) {
   let out = s;
   out = out.replace(/\bpro\b/gi, "Pro");
@@ -75,7 +100,7 @@ function normalizeSuffixes(s) {
   // буква вътре, за да не пипа легитимни неща като "(2021)" (година).
   out = out.replace(/\s*\([A-Z][A-Z0-9]{3,}\)\s*$/, "");
   out = out.replace(/\s+/g, " ").trim();
-  return out;
+  return canonicalizeModel(out);
 }
 
 // Марки, които правят и телефони, и часовници - когато устройството е
@@ -229,13 +254,22 @@ function processSlashGroup(text) {
       // "SE" е самостоятелен модел и не се пипа).
       modelText = `${currentRoot} ${part}`;
     } else if (currentFullModel && SUFFIX_ONLY_RE.test(part.trim())) {
-      // махаме суфикса на предходния модел, за да не се трупат
-      // ("iPhone 14 Pro" -> база "iPhone 14", после + "Max")
-      const base = currentFullModel.replace(
-        /\s+(Pro Max|Pro|Plus|Max|Mini|Ultra|FE|Lite|Air|\d+G)$/i,
-        ""
-      );
-      modelText = `${base} ${part}`;
+      const suffix = part.trim();
+      // Специален случай: "iPhone 14 Pro/Max" при koff.ro значи
+      // "14 Pro и 14 Pro Max" - самотното "Max" НАДГРАЖДА предходния
+      // "Pro", вместо да го замества (иначе се получава несъществуващ
+      // модел "iPhone 14 Max").
+      if (/^Max$/i.test(suffix) && /\bPro$/i.test(currentFullModel)) {
+        modelText = `${currentFullModel} Max`;
+      } else {
+        // махаме суфикса на предходния модел, за да не се трупат
+        // ("iPhone 14 Pro" -> база "iPhone 14", после + "Plus")
+        const base = currentFullModel.replace(
+          /\s+(Pro Max|Pro|Plus|Max|Mini|Ultra|FE|Lite|Air|\d+G)$/i,
+          ""
+        );
+        modelText = `${base} ${suffix}`;
+      }
     }
     const finalModel = normalizeSuffixes(modelText);
     currentFullModel = finalModel;

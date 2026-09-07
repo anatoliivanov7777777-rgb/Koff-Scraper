@@ -17,7 +17,7 @@ import { ConvexHttpClient } from "convex/browser";
 import fs from "fs";
 import { CATEGORY_MAP } from "./category-map.mjs";
 import { parseProductName } from "./parse-names.mjs";
-import { extractBrandModelsFromFullSegment } from "./brand-model.mjs";
+import { extractBrandModelsFromFullSegment, isInvalidModel } from "./brand-model.mjs";
 import { calcB2BPrice, calcB2CPrice } from "./pricing.mjs";
 
 const CASEKING_CONVEX_URL =
@@ -83,7 +83,7 @@ function buildCaseKingProducts(raw, categorySlug) {
   let brandModels = [];
   if (parsed.rawModelSegment) {
     brandModels = extractBrandModelsFromFullSegment(parsed.rawModelSegment).filter(
-      (bm) => bm.brand && bm.model
+      (bm) => bm.brand && bm.model && !isInvalidModel(bm.model)
     );
   }
 
@@ -112,7 +112,9 @@ function buildCaseKingProducts(raw, categorySlug) {
   return unique.map((bm) => ({
     ...commonFields,
     category: bm.isWatch ? WATCH_CATEGORY_SLUG : categorySlug,
-    name: baseTitle,
+    // Добавяме съвместимото устройство в самото име, за да може да се
+    // намери през търсачката на сайта (напр. търсене "iPhone 15 Pro").
+    name: `${baseTitle} (за ${bm.brand} ${bm.model})`,
     brand: bm.brand,
     model: bm.model,
     // не се праща към Convex - ползва се само локално, за да знаем какъв
