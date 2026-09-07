@@ -1,7 +1,11 @@
 name: Sync to case-king.bg
 
-# Само РЪЧНО пускане - никога автоматично, докато не сме сигурни, че
-# всичко работи коректно на живия сайт.
+# Ръчно пускане + автоматично всяка нощ.
+#
+# ВАЖНО за автоматичния run: при `schedule` полетата от формата НЕ
+# съществуват (github.event.inputs е празно), затова навсякъде по-долу
+# има резервна стойност през `||`. Без нея LIVE щеше да е празен низ и
+# нощният run щеше да е безполезен dry run.
 on:
   workflow_dispatch:
     inputs:
@@ -25,10 +29,31 @@ on:
         options:
           - 'false'
           - 'true'
+      force:
+        description: 'FORCE (true = пропуска проверката за минимален брой скрейпнати продукти)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+  schedule:
+    # 03:00 UTC = 06:00 българско лятно / 05:00 зимно време.
+    # GitHub cron е ВИНАГИ в UTC и не следи смяната на часа, затова
+    # реалният час се измества с час два пъти годишно.
+    - cron: '0 3 * * *'
+
+# Пази от застъпване: ако предишен run още върви, новият изчаква вместо
+# да се логва паралелно в koff.ro и да пише едновременно в Convex.
+concurrency:
+  group: sync-caseking
+  cancel-in-progress: false
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     defaults:
       run:
         working-directory: koff-scraper/scraper
@@ -51,7 +76,9 @@ jobs:
 
       - name: Sync to case-king.bg
         env:
-          LIVE: ${{ github.event.inputs.live }}
-          LIMIT: ${{ github.event.inputs.limit }}
-          CLEANUP: ${{ github.event.inputs.cleanup }}
+          # Нощем: реален пълен sync, без изтриване.
+          LIVE: ${{ github.event.inputs.live || 'true' }}
+          LIMIT: ${{ github.event.inputs.limit || 'all' }}
+          CLEANUP: ${{ github.event.inputs.cleanup || 'false' }}
+          FORCE: ${{ github.event.inputs.force || 'false' }}
         run: node sync-caseking.mjs
