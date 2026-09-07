@@ -39,6 +39,58 @@ const SOURCE_TAG = "koff-sync";
 // за да не се смесват в глобалния филтър Марка/Модел.
 const WATCH_CATEGORY_SLUG = "aksesoari_chasovnici";
 
+// Категории, в които филтърът е по марка на САМИЯ аксесоар (Mcdodo,
+// Baseus, Spigen...), а НЕ по съвместим телефон. Зарядно или кабел не
+// "принадлежи" на конкретен модел телефон, затова тук не разцепваме
+// продукта на по един ред за всяко съвместимо устройство - качва се
+// ЕДИН ред с марка = производителя.
+const ACCESSORY_CATEGORY_SLUGS = new Set([
+  "zaryadni-ustroystva",
+  "kabeli-za-zaryadane",
+  "bezzhichni-zaryadni",
+  "vanshni-baterii",
+  "headphones",
+  "memory_cards",
+  "audio_cables",
+]);
+
+// koff.ro пише имената на производителите непоследователно (МCDODO,
+// mcdodo, McDodo...). Уеднаквяваме ги, за да не се появят по 3 отделни
+// марки в дропдауна за едно и също нещо. Сравнението е без регистър;
+// ако марка липсва тук, се ползва както е дошла от доставчика.
+const ACCESSORY_BRAND_CANONICAL = {
+  mcdodo: "Mcdodo",
+  baseus: "Baseus",
+  spigen: "Spigen",
+  hoco: "Hoco",
+  remax: "Remax",
+  borofone: "Borofone",
+  ugreen: "Ugreen",
+  anker: "Anker",
+  joyroom: "Joyroom",
+  usams: "Usams",
+  dudao: "Dudao",
+  xo: "XO",
+  wiwu: "WiWU",
+  nillkin: "Nillkin",
+  ldnio: "LDNIO",
+  samsung: "Samsung",
+  apple: "Apple",
+  xiaomi: "Xiaomi",
+  huawei: "Huawei",
+  sandisk: "SanDisk",
+  kingston: "Kingston",
+  lexar: "Lexar",
+  jbl: "JBL",
+  sony: "Sony",
+};
+
+function normalizeAccessoryBrand(name) {
+  const n = norm(name);
+  if (!n) return "";
+  return ACCESSORY_BRAND_CANONICAL[n.toLowerCase()] || n;
+}
+
 const DEFAULT_SPECS = {
   material: "Премиум силикон / TPU / Кожа",
   weight: "30г",
@@ -79,6 +131,24 @@ function buildCaseKingProducts(raw, categorySlug) {
     oldPriceB2B: null,
     source: SOURCE_TAG,
   };
+
+  // Аксесоарни категории: един ред, марка = производителят на аксесоара.
+  // Съвместимите телефони НЕ се изброяват - нито като отделни редове,
+  // нито в името (клиентът избира Зарядни > Mcdodo, не Зарядни > iPhone).
+  if (ACCESSORY_CATEGORY_SLUGS.has(categorySlug)) {
+    const accBrand = normalizeAccessoryBrand(raw.manufacturer);
+    return [
+      {
+        ...commonFields,
+        category: categorySlug,
+        name: baseTitle,
+        brand: accBrand || "Всички марки",
+        model: "Всички модели",
+        // локален флаг - определя type на марката при създаването ѝ
+        _isAccessory: Boolean(accBrand),
+      },
+    ];
+  }
 
   let brandModels = [];
   if (parsed.rawModelSegment) {
@@ -195,9 +265,22 @@ async function main() {
   }
 
   const watchRows = caseKingProducts.filter((p) => p.category === WATCH_CATEGORY_SLUG).length;
+  const accRows = caseKingProducts.filter((p) => ACCESSORY_CATEGORY_SLUGS.has(p.category)).length;
   console.log(
-    `Генерирани case-king.bg продуктови реда: ${caseKingProducts.length} (от които ${watchRows} часовникови)`
+    `Генерирани case-king.bg продуктови реда: ${caseKingProducts.length} ` +
+      `(${watchRows} часовникови, ${accRows} аксесоарни по марка)`
   );
+
+  // Кои марки аксесоари са разпознати - полезно за проверка дали
+  // ACCESSORY_BRAND_CANONICAL не пропуска дублирани изписвания.
+  const accBrands = [
+    ...new Set(
+      caseKingProducts
+        .filter((p) => ACCESSORY_CATEGORY_SLUGS.has(p.category))
+        .map((p) => p.brand)
+    ),
+  ].sort();
+  console.log(`Марки аксесоари (${accBrands.length}): ${accBrands.join(", ")}`);
   console.log("Примерни 3 реда:");
   console.log(JSON.stringify(caseKingProducts.slice(0, 3), null, 2));
 
@@ -244,7 +327,7 @@ async function main() {
           name: p.brand,
           logo: `logo_${brandLower.replace(/\s+/g, "_")}.webp`,
           source: SOURCE_TAG,
-          type: p._isWatch ? "watch" : "phone",
+          type: p._isAccessory ? "accessory" : p._isWatch ? "watch" : "phone",
         });
         brandsCache.add(brandLower);
         newBrands++;
@@ -274,7 +357,7 @@ async function main() {
   for (let i = 0; i < caseKingProducts.length; i += CHUNK) {
     const chunk = caseKingProducts
       .slice(i, i + CHUNK)
-      .map(({ _isWatch, ...rest }) => rest);
+      .map(({ _isWatch, _isAccessory, ...rest }) => rest);
     const res = await convex.mutation("products:upsertBatch", { products: chunk });
     totalCreated += res.createdCount || 0;
     totalUpdated += res.updatedCount || 0;
