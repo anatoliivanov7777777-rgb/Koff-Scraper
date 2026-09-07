@@ -52,6 +52,10 @@ const ACCESSORY_CATEGORY_SLUGS = new Set([
   "headphones",
   "memory_cards",
   "audio_cables",
+  "postavki-za-byuro",
+  "selfi-stikove",
+  "popsoket-i-vrazki",
+  "aksesoari-za-avtomobili",
 ]);
 
 // koff.ro пише имената на производителите непоследователно (МCDODO,
@@ -100,6 +104,68 @@ const DEFAULT_SPECS = {
 
 function norm(s) {
   return (s || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+}
+
+// Допълнения към CATEGORY_MAP - koff.ro категории, които липсваха и
+// заради които секции на сайта стояха празни. Държим ги тук, за да не
+// пипаме category-map.mjs; може после да се слеят в него.
+// ВАЖНО: ключовете са ТОЧНИТЕ имена от koff.ro (както излизат в
+// диагностиката "НЕПОКРИТИ категории").
+const EXTRA_CATEGORY_MAP = {
+  // --- Слушалки ---
+  "In-Ear Wireless": "headphones",
+  "On-Ear": "headphones",
+  "Erabuds Mix": "headphones",
+  "Bluetooth Headset": "headphones",
+  "Over the Neck": "headphones",
+  Airpods: "headphones",
+  "Galaxy Buds": "headphones",
+
+  // --- Памети & Карти ---
+  "Memory sticks": "memory_cards",
+  "Memory cards": "memory_cards",
+  "Memory & Storage Devices": "memory_cards",
+  "Card readers": "memory_cards",
+  "Solid-State Drive (SSD)": "memory_cards",
+
+  // --- Аудио кабели ---
+  "Audio-Video Adapters": "audio_cables",
+  "Jack 3.5mm": "audio_cables",
+
+  // --- Кабели за зареждане (адаптери/преходници) ---
+  "OTG Adapters": "kabeli-za-zaryadane",
+  "USB/Type-C/Lightning Adapters": "kabeli-za-zaryadane",
+
+  // --- Дребни поправки ---
+  "Phone Cases": "keysove-i-kalufi",
+};
+
+// Хидрогел фолиото не е отделна категория в koff.ro - стои вътре в
+// протекторите за екран. Разпознаваме го по името на продукта.
+const HYDROGEL_RE = /hydrogel|хидрогел/i;
+const HYDROGEL_SLUG = "hydrogel_film";
+
+function resolveCategorySlug(rawProduct) {
+  const koffCat = norm(rawProduct.category);
+  const slug = CATEGORY_MAP[koffCat] || EXTRA_CATEGORY_MAP[koffCat];
+  if (!slug) return null;
+  if (slug === "protektori-za-ekran" && HYDROGEL_RE.test(rawProduct.name || "")) {
+    return HYDROGEL_SLUG;
+  }
+  return slug;
+}
+
+// Сглобява "марка + модел" за добавката в името, без да повтаря дума.
+// При часовниците марката е напр. "Samsung Watch", а моделът "Watch
+// Ultra 2" - наивното слепване даваше "Samsung Watch Watch Ultra 2".
+function deviceLabel(brand, model) {
+  const brandWords = brand.trim().split(/\s+/);
+  const lastWord = brandWords[brandWords.length - 1];
+  const dupRe = new RegExp(`^${lastWord}\\s+`, "i");
+  const cleanModel = dupRe.test(model.trim())
+    ? model.trim().replace(dupRe, "")
+    : model.trim();
+  return `${brand} ${cleanModel}`.replace(/\s+/g, " ").trim();
 }
 
 function buildCaseKingProducts(raw, categorySlug) {
@@ -184,7 +250,7 @@ function buildCaseKingProducts(raw, categorySlug) {
     category: bm.isWatch ? WATCH_CATEGORY_SLUG : categorySlug,
     // Добавяме съвместимото устройство в самото име, за да може да се
     // намери през търсачката на сайта (напр. търсене "iPhone 15 Pro").
-    name: `${baseTitle} (за ${bm.brand} ${bm.model})`,
+    name: `${baseTitle} (за ${deviceLabel(bm.brand, bm.model)})`,
     brand: bm.brand,
     model: bm.model,
     // не се праща към Convex - ползва се само локално, за да знаем какъв
@@ -262,7 +328,7 @@ async function main() {
   const mappedCats = new Map(); // слъг -> брой суровини продукти
   for (const p of rawProducts) {
     const koffCat = norm(p.category);
-    const slug = CATEGORY_MAP[koffCat];
+    const slug = resolveCategorySlug(p);
     if (!slug) {
       unmappedCats.set(koffCat, (unmappedCats.get(koffCat) || 0) + 1);
       continue;
