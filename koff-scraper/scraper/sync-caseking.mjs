@@ -258,11 +258,34 @@ async function main() {
   if (LIMIT) rawProducts = rawProducts.slice(0, LIMIT);
 
   const caseKingProducts = [];
+  const unmappedCats = new Map(); // koff.ro категория -> брой продукти
+  const mappedCats = new Map(); // слъг -> брой суровини продукти
   for (const p of rawProducts) {
-    const slug = CATEGORY_MAP[norm(p.category)];
-    if (!slug) continue;
+    const koffCat = norm(p.category);
+    const slug = CATEGORY_MAP[koffCat];
+    if (!slug) {
+      unmappedCats.set(koffCat, (unmappedCats.get(koffCat) || 0) + 1);
+      continue;
+    }
+    mappedCats.set(slug, (mappedCats.get(slug) || 0) + 1);
     caseKingProducts.push(...buildCaseKingProducts(p, slug));
   }
+
+  // ДИАГНОСТИКА: кои koff.ro категории се изхвърлят, защото ги няма в
+  // category-map.mjs. Точно те са причината секции на сайта да са празни.
+  const unmappedTotal = [...unmappedCats.values()].reduce((a, b) => a + b, 0);
+  console.log(
+    `\n--- НЕПОКРИТИ koff.ro категории: ${unmappedCats.size} броя, ${unmappedTotal} продукта ---`
+  );
+  for (const [cat, n] of [...unmappedCats.entries()].sort((a, b) => b[1] - a[1])) {
+    console.log(`  ${String(n).padStart(6)}  ${cat}`);
+  }
+
+  console.log(`\n--- ПОКРИТИ категории (суровини продукти по слъг) ---`);
+  for (const [slug, n] of [...mappedCats.entries()].sort((a, b) => b[1] - a[1])) {
+    console.log(`  ${String(n).padStart(6)}  ${slug}`);
+  }
+  console.log("");
 
   const watchRows = caseKingProducts.filter((p) => p.category === WATCH_CATEGORY_SLUG).length;
   const accRows = caseKingProducts.filter((p) => ACCESSORY_CATEGORY_SLUGS.has(p.category)).length;
@@ -281,8 +304,17 @@ async function main() {
     ),
   ].sort();
   console.log(`Марки аксесоари (${accBrands.length}): ${accBrands.join(", ")}`);
-  console.log("Примерни 3 реда:");
-  console.log(JSON.stringify(caseKingProducts.slice(0, 3), null, 2));
+  // По един примерен ред от всяка категория (само ключовите полета -
+  // пълният JSON залива лога).
+  console.log("Примерен ред от всяка категория:");
+  const shown = new Set();
+  for (const p of caseKingProducts) {
+    if (shown.has(p.category)) continue;
+    shown.add(p.category);
+    console.log(
+      `  [${p.category}] марка="${p.brand}" модел="${p.model}" | ${p.name}`
+    );
+  }
 
   if (!LIVE) {
     console.log("\nDRY RUN - нищо не е записано. Пусни с LIVE=true за реален запис.");
