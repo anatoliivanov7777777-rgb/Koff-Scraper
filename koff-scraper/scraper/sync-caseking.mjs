@@ -280,6 +280,30 @@ async function runBackfillMigration(convex) {
   console.log(`Миграция готова. Общо мигрирани: ${totalUpdated}`);
 }
 
+async function refreshCategoryCounts(convex) {
+  console.log("\nПреизчислявам броячите на категориите...");
+  let cursor = null;
+  let countsSoFar = {};
+  let isDone = false;
+
+  while (!isDone) {
+    const res = await convex.mutation("meta:countProductsByCategory", {
+      cursor,
+      countsSoFar,
+    });
+    countsSoFar = res.counts;
+    isDone = res.isDone;
+    cursor = res.continueCursor;
+  }
+
+  const entries = Object.entries(countsSoFar).sort((a, b) => b[1] - a[1]);
+  console.log("Броячи по категории:");
+  for (const [cat, n] of entries) {
+    console.log(`  ${String(n).padStart(6)}  ${cat}`);
+  }
+  return countsSoFar;
+}
+
 async function runCleanup(convex) {
   console.log(`\nCLEANUP режим - изтривам АБСОЛЮТНО ВСИЧКИ продукти, марки и модели...`);
 
@@ -306,6 +330,9 @@ async function runCleanup(convex) {
   console.log(
     `\nCLEANUP готово: ${totalDeleted} продукта, ${brandsRes.deleted} марки, ${modelsRes.deleted} модела изтрити.`
   );
+
+  // Иначе плочките в "Категории" продължават да показват старите числа.
+  await refreshCategoryCounts(convex);
 }
 
 async function main() {
@@ -326,6 +353,20 @@ async function main() {
   const raw = fs.readFileSync("./koff-products-raw.json", "utf-8");
   let rawProducts = JSON.parse(raw);
   console.log(`Заредени суровини продукти: ${rawProducts.length}`);
+
+  // ПРЕДПАЗИТЕЛ за автоматичните нощни run-ове: ако koff.ro върне
+  // подозрително малко продукти (счупен логин, сменен API, срив), спираме
+  // ПРЕДИ да пипнем живия сайт. При тест с LIMIT проверката се пропуска.
+  // Заобикаля се с FORCE=true, ако спадът е реален.
+  const MIN_RAW = parseInt(process.env.MIN_RAW_PRODUCTS || "10000", 10);
+  if (LIVE && !LIMIT && process.env.FORCE !== "true" && rawProducts.length < MIN_RAW) {
+    console.error(
+      `\n❌ СПРЯНО: скрейпнати са само ${rawProducts.length} продукта, ` +
+        `а очакваме поне ${MIN_RAW}. Вероятно скрейпването е гръмнало.\n` +
+        `Живият сайт НЕ е пипнат. Ако спадът е реален, пусни пак с FORCE=true.`
+    );
+    process.exit(1);
+  }
 
   if (LIMIT) rawProducts = rawProducts.slice(0, LIMIT);
 
@@ -471,6 +512,10 @@ async function main() {
   }
 
   console.log(`\nГотово! Общо нови: ${totalCreated}, общо обновени: ${totalUpdated}`);
+
+  // Броячите на плочките в "Категории" са записано поле, не се смятат в
+  // движение - без това извикване всички показват 0 след sync.
+  await refreshCategoryCounts(convex);
 }
 
 main().catch((err) => {
