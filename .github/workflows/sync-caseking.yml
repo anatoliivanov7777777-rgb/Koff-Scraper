@@ -13,7 +13,7 @@ on:
           - 'true'
 
       limit:
-        description: 'Лимит продукти (напр. 5). За пълен run напиши: all'
+        description: 'Лимит продукти'
         required: false
         default: '5'
 
@@ -56,24 +56,28 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install scraper dependencies
-        working-directory: koff-scraper/scraper
-        run: npm install
-
-      - name: Configure Convex backend path
-        working-directory: koff-scraper/scraper
+      - name: Prepare Convex backend
+        working-directory: koff-scraper
         run: |
-          cat > convex.json <<'EOF'
+          cat > package.json <<'EOF'
           {
-            "functions": "../convex"
+            "private": true,
+            "dependencies": {
+              "convex": "^1.38.0"
+            }
           }
           EOF
+          npm install
 
       - name: Deploy scraper Convex backend
-        working-directory: koff-scraper/scraper
+        working-directory: koff-scraper
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
         run: npx convex deploy
+
+      - name: Install scraper dependencies
+        working-directory: koff-scraper/scraper
+        run: npm install
 
       - name: Run koff.ro scraper
         if: github.event.inputs.cleanup != 'true'
