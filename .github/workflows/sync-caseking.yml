@@ -56,19 +56,24 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install Convex backend dependencies
-        working-directory: koff-scraper
-        run: npm install
-
-      - name: Deploy scraper Convex backend
-        working-directory: koff-scraper
-        env:
-          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
-        run: npx convex deploy
-
       - name: Install scraper dependencies
         working-directory: koff-scraper/scraper
         run: npm install
+
+      - name: Configure Convex backend path
+        working-directory: koff-scraper/scraper
+        run: |
+          cat > convex.json <<'EOF'
+          {
+            "functions": "../convex"
+          }
+          EOF
+
+      - name: Deploy scraper Convex backend
+        working-directory: koff-scraper/scraper
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: npx convex deploy
 
       - name: Run koff.ro scraper
         if: github.event.inputs.cleanup != 'true'
