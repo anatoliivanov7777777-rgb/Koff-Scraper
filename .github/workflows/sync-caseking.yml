@@ -2,10 +2,7 @@ name: Sync to case-king.bg
 
 # Ръчно пускане + автоматично всяка нощ.
 #
-# ВАЖНО за автоматичния run: при `schedule` полетата от формата НЕ
-# съществуват (github.event.inputs е празно), затова навсякъде по-долу
-# има резервна стойност през `||`. Без нея LIVE щеше да е празен низ и
-# нощният run щеше да е безполезен dry run.
+# При schedule няма github.event.inputs, затова има резервни стойности.
 on:
   workflow_dispatch:
     inputs:
@@ -17,20 +14,23 @@ on:
         options:
           - 'false'
           - 'true'
+
       limit:
-        description: 'Лимит суровини продукти (напр. 5). За ПЪЛЕН run напиши думата: all'
+        description: 'Лимит продукти (напр. 5). За пълен run напиши: all'
         required: false
         default: '5'
+
       cleanup:
-        description: 'CLEANUP (true = ИЗТРИВА всичко със source=koff-sync, без да качва нищо ново)'
+        description: 'CLEANUP (true = изтрива source=koff-sync без да качва нови)'
         required: true
         default: 'false'
         type: choice
         options:
           - 'false'
           - 'true'
+
       force:
-        description: 'FORCE (true = пропуска проверката за минимален брой скрейпнати продукти)'
+        description: 'FORCE (true = пропуска проверката за минимален брой продукти)'
         required: false
         default: 'false'
         type: choice
@@ -39,13 +39,8 @@ on:
           - 'true'
 
   schedule:
-    # 03:00 UTC = 06:00 българско лятно / 05:00 зимно време.
-    # GitHub cron е ВИНАГИ в UTC и не следи смяната на часа, затова
-    # реалният час се измества с час два пъти годишно.
     - cron: '0 3 * * *'
 
-# Пази от застъпване: ако предишен run още върви, новият изчаква вместо
-# да се логва паралелно в koff.ro и да пише едновременно в Convex.
 concurrency:
   group: sync-caseking
   cancel-in-progress: false
@@ -54,18 +49,24 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     timeout-minutes: 120
+
     defaults:
       run:
         working-directory: koff-scraper/scraper
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: "20"
+
       - name: Install dependencies
         run: npm install
 
-      - name: Run koff.ro scraper (генерира koff-products-raw.json)
+      - name: Run koff.ro scraper
         if: github.event.inputs.cleanup != 'true'
         env:
           KOFF_EMAIL: ${{ secrets.KOFF_EMAIL }}
@@ -74,9 +75,9 @@ jobs:
           SCRAPER_SECRET: ${{ secrets.SCRAPER_SECRET }}
         run: npm run scrape
 
-      - name: Sync to case-king.bg
+      - name: Sync to CaseKing Convex
         env:
-          # Нощем: реален пълен sync, без изтриване.
+          CASEKING_CONVEX_URL: ${{ secrets.CASEKING_CONVEX_URL }}
           LIVE: ${{ github.event.inputs.live || 'true' }}
           LIMIT: ${{ github.event.inputs.limit || 'all' }}
           CLEANUP: ${{ github.event.inputs.cleanup || 'false' }}
