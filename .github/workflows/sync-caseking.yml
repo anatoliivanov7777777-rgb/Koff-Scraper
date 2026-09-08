@@ -1,8 +1,5 @@
 name: Sync to case-king.bg
 
-# Ръчно пускане + автоматично всяка нощ.
-#
-# При schedule няма github.event.inputs, затова има резервни стойности.
 on:
   workflow_dispatch:
     inputs:
@@ -21,7 +18,7 @@ on:
         default: '5'
 
       cleanup:
-        description: 'CLEANUP (true = изтрива source=koff-sync без да качва нови)'
+        description: 'CLEANUP'
         required: true
         default: 'false'
         type: choice
@@ -30,7 +27,7 @@ on:
           - 'true'
 
       force:
-        description: 'FORCE (true = пропуска проверката за минимален брой продукти)'
+        description: 'FORCE'
         required: false
         default: 'false'
         type: choice
@@ -50,10 +47,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
-    defaults:
-      run:
-        working-directory: koff-scraper/scraper
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -63,11 +56,23 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install dependencies
+      - name: Install Convex backend dependencies
+        working-directory: koff-scraper
+        run: npm install
+
+      - name: Deploy scraper Convex backend
+        working-directory: koff-scraper
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: npx convex deploy
+
+      - name: Install scraper dependencies
+        working-directory: koff-scraper/scraper
         run: npm install
 
       - name: Run koff.ro scraper
         if: github.event.inputs.cleanup != 'true'
+        working-directory: koff-scraper/scraper
         env:
           KOFF_EMAIL: ${{ secrets.KOFF_EMAIL }}
           KOFF_PASSWORD: ${{ secrets.KOFF_PASSWORD }}
@@ -76,6 +81,7 @@ jobs:
         run: npm run scrape
 
       - name: Sync to CaseKing Convex
+        working-directory: koff-scraper/scraper
         env:
           CASEKING_CONVEX_URL: ${{ secrets.CASEKING_CONVEX_URL }}
           LIVE: ${{ github.event.inputs.live || 'true' }}
