@@ -9,10 +9,19 @@ export default defineSchema({
     basePrice: v.number(),
     priceB2B: v.number(),
     priceB2C: v.number(),
+
     imageUrl: v.optional(v.string()),
+    category: v.optional(v.string()),
+    manufacturer: v.optional(v.string()),
+
     lastSeenAt: v.number(),
     active: v.boolean(),
   })
     .index("by_sourceId", ["sourceId"])
-    .index("by_lastSeenAt", ["lastSeenAt"]),
+    .index("by_lastSeenAt", ["lastSeenAt"])
+    .index("by_category", ["category"]),
+
+  categories: defineTable({
+    name: v.string(),
+  }).index("by_name", ["name"]),
 });
