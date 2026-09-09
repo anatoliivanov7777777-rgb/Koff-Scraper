@@ -9,9 +9,7 @@
 // Употреба:
 //   LIVE=true node sync-caseking.mjs                 - реален пълен sync
 //   LIMIT=10 LIVE=true node sync-caseking.mjs         - тест с малка част
-//   CLEANUP=true LIVE=true node sync-caseking.mjs     - изтрива ВСИЧКО,
-//     маркирано с source="koff-sync" (продукти, марки, модели), БЕЗ да
-//     качва нищо ново - за чист рестарт след поправка на логиката.
+//   Cleanup is deliberately unavailable to automated synchronization.
 
 import { ConvexHttpClient } from "convex/browser";
 import fs from "fs";
@@ -20,12 +18,31 @@ import { parseProductName } from "./parse-names.mjs";
 import { extractBrandModelsFromFullSegment, isInvalidModel } from "./brand-model.mjs";
 import { calcB2BPrice, calcB2CPrice } from "./pricing.mjs";
 
-const CASEKING_CONVEX_URL =
-  process.env.CASEKING_CONVEX_URL ||
-  "https://trustworthy-possum-230.eu-west-1.convex.cloud";
+const OWNED_CASEKING_CONVEX_URL = "https://aware-toucan-771.eu-west-1.convex.cloud";
+const CASEKING_CONVEX_URL = process.env.CASEKING_CONVEX_URL;
+const CASEKING_SYNC_SECRET = process.env.CASEKING_SYNC_SECRET;
 
 const LIVE = process.env.LIVE === "true";
 const CLEANUP = process.env.CLEANUP === "true";
+if (CLEANUP) throw new Error("CLEANUP is disabled for the Koff → CaseKing sync");
+if (CASEKING_CONVEX_URL !== OWNED_CASEKING_CONVEX_URL) {
+  throw new Error("CASEKING_CONVEX_URL must point to the owned CaseKing deployment");
+}
+if (LIVE && (!CASEKING_SYNC_SECRET || CASEKING_SYNC_SECRET.length < 32
+  || CASEKING_SYNC_SECRET.length > 512 || /^ck2_(admin|user)_/.test(CASEKING_SYNC_SECRET))) {
+  throw new Error("CASEKING_SYNC_SECRET is required for live synchronization");
+}
+const SYNC_OPERATIONS = new Set([
+  "products:backfillMatchKeys",
+  "products:upsertBatch",
+  "meta:addBrand",
+  "meta:addModel",
+  "meta:countProductsByCategory",
+]);
+function syncMutation(convex, operation, args) {
+  if (!SYNC_OPERATIONS.has(operation)) throw new Error("Operation is not approved for machine sync");
+  return convex.mutation(operation, { ...args, syncSecret: CASEKING_SYNC_SECRET });
+}
 const LIMIT_RAW = (process.env.LIMIT || "").trim().toLowerCase();
 const LIMIT = LIMIT_RAW && LIMIT_RAW !== "all" ? parseInt(LIMIT_RAW, 10) : null;
 
@@ -202,6 +219,7 @@ function buildCaseKingProducts(raw, categorySlug) {
     priceB2B,
     oldPriceB2B: null,
     source: SOURCE_TAG,
+    ...(Number.isFinite(raw.stock) && raw.stock >= 0 ? { stock: raw.stock } : {}),
   };
 
   // Аксесоарни категории: един ред, марка = производителят на аксесоара.
@@ -216,6 +234,7 @@ function buildCaseKingProducts(raw, categorySlug) {
         name: baseTitle,
         brand: accBrand || "Всички марки",
         model: "Всички модели",
+        sourceKey: `${SOURCE_TAG}:${raw.sourceId}:${categorySlug}:${accBrand || "all"}:all`,
         // локален флаг - определя type на марката при създаването ѝ
         _isAccessory: Boolean(accBrand),
       },
@@ -237,6 +256,7 @@ function buildCaseKingProducts(raw, categorySlug) {
         name: baseTitle,
         brand: "Всички марки",
         model: "Всички модели",
+        sourceKey: `${SOURCE_TAG}:${raw.sourceId}:${categorySlug}:all:all`,
       },
     ];
   }
@@ -259,6 +279,7 @@ function buildCaseKingProducts(raw, categorySlug) {
     name: `${baseTitle} (за ${deviceLabel(bm.brand, bm.model)})`,
     brand: bm.brand,
     model: bm.model,
+    sourceKey: `${SOURCE_TAG}:${raw.sourceId}:${bm.isWatch ? WATCH_CATEGORY_SLUG : categorySlug}:${bm.brand}:${bm.model}`,
     // не се праща към Convex - ползва се само локално, за да знаем какъв
     // type да зададем на марката/модела при създаването им
     _isWatch: bm.isWatch,
@@ -272,7 +293,7 @@ async function runBackfillMigration(convex) {
   let isDone = false;
 
   while (!isDone) {
-    const res = await convex.mutation("products:backfillMatchKeys", { cursor });
+    const res = await syncMutation(convex, "products:backfillMatchKeys", { cursor });
     totalUpdated += res.updated;
     isDone = res.isDone;
     cursor = res.continueCursor;
@@ -287,7 +308,7 @@ async function refreshCategoryCounts(convex) {
   let isDone = false;
 
   while (!isDone) {
-    const res = await convex.mutation("meta:countProductsByCategory", {
+    const res = await syncMutation(convex, "meta:countProductsByCategory", {
       cursor,
       countsSoFar,
     });
@@ -304,49 +325,8 @@ async function refreshCategoryCounts(convex) {
   return countsSoFar;
 }
 
-async function runCleanup(convex) {
-  console.log(`\nCLEANUP режим - изтривам АБСОЛЮТНО ВСИЧКИ продукти, марки и модели...`);
-
-  console.log("Изтривам продукти...");
-  let cursor = null;
-  let isDone = false;
-  let totalDeleted = 0;
-  while (!isDone) {
-    const res = await convex.mutation("products:deleteAllProductsPaginated", { cursor });
-    totalDeleted += res.deleted;
-    isDone = res.isDone;
-    cursor = res.continueCursor;
-    console.log(`  изтрити продукти дотук: ${totalDeleted}`);
-  }
-
-  console.log("Изтривам марки...");
-  const brandsRes = await convex.mutation("meta:clearAllBrands", {});
-  console.log(`  изтрити марки: ${brandsRes.deleted}`);
-
-  console.log("Изтривам модели...");
-  const modelsRes = await convex.mutation("meta:clearAllModels", {});
-  console.log(`  изтрити модели: ${modelsRes.deleted}`);
-
-  console.log(
-    `\nCLEANUP готово: ${totalDeleted} продукта, ${brandsRes.deleted} марки, ${modelsRes.deleted} модела изтрити.`
-  );
-
-  // Иначе плочките в "Категории" продължават да показват старите числа.
-  await refreshCategoryCounts(convex);
-}
-
 async function main() {
-  console.log(`Режим: ${LIVE ? "LIVE" : "DRY RUN (само преглед)"}${CLEANUP ? " + CLEANUP" : ""}`);
-
-  if (CLEANUP) {
-    if (!LIVE) {
-      console.log("CLEANUP изисква и LIVE=true. Нищо не е направено.");
-      return;
-    }
-    const convex = new ConvexHttpClient(CASEKING_CONVEX_URL);
-    await runCleanup(convex);
-    return;
-  }
+  console.log(`Режим: ${LIVE ? "LIVE" : "DRY RUN (само преглед)"}`);
 
   if (LIMIT) console.log(`Лимит за тест: първите ${LIMIT} суровини продукта`);
 
@@ -468,7 +448,7 @@ async function main() {
     if (p.brand !== "Всички марки") {
       const brandLower = p.brand.toLowerCase();
       if (!brandsCache.has(brandLower)) {
-        await convex.mutation("meta:addBrand", {
+        await syncMutation(convex, "meta:addBrand", {
           name: p.brand,
           logo: `logo_${brandLower.replace(/\s+/g, "_")}.webp`,
           source: SOURCE_TAG,
@@ -481,7 +461,7 @@ async function main() {
       if (p.model !== "Всички модели") {
         const modelKey = `${brandLower}:${p.model.toLowerCase()}`;
         if (!modelsCache.has(modelKey)) {
-          await convex.mutation("meta:addModel", {
+          await syncMutation(convex, "meta:addModel", {
             brand: p.brand,
             name: p.model,
             source: SOURCE_TAG,
@@ -503,7 +483,7 @@ async function main() {
     const chunk = caseKingProducts
       .slice(i, i + CHUNK)
       .map(({ _isWatch, _isAccessory, ...rest }) => rest);
-    const res = await convex.mutation("products:upsertBatch", { products: chunk });
+    const res = await syncMutation(convex, "products:upsertBatch", { products: chunk });
     totalCreated += res.createdCount || 0;
     totalUpdated += res.updatedCount || 0;
     console.log(

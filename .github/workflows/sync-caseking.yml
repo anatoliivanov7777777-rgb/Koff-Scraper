@@ -17,15 +17,6 @@ on:
         required: false
         default: '5'
 
-      cleanup:
-        description: 'CLEANUP'
-        required: true
-        default: 'false'
-        type: choice
-        options:
-          - 'false'
-          - 'true'
-
       force:
         description: 'FORCE'
         required: false
@@ -56,45 +47,24 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Prepare Convex backend
-        working-directory: koff-scraper
-        run: |
-          cat > package.json <<'EOF'
-          {
-            "private": true,
-            "dependencies": {
-              "convex": "^1.38.0"
-            }
-          }
-          EOF
-          npm install
-
-      - name: Deploy scraper Convex backend
-        working-directory: koff-scraper
-        env:
-          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
-        run: npx convex deploy
-
       - name: Install scraper dependencies
         working-directory: koff-scraper/scraper
         run: npm install
 
       - name: Run koff.ro scraper
-        if: github.event.inputs.cleanup != 'true'
         working-directory: koff-scraper/scraper
         env:
           KOFF_EMAIL: ${{ secrets.KOFF_EMAIL }}
           KOFF_PASSWORD: ${{ secrets.KOFF_PASSWORD }}
-          CONVEX_HTTP_URL: ${{ secrets.CONVEX_HTTP_URL }}
-          SCRAPER_SECRET: ${{ secrets.SCRAPER_SECRET }}
         run: npm run scrape
 
       - name: Sync to CaseKing Convex
         working-directory: koff-scraper/scraper
         env:
           CASEKING_CONVEX_URL: ${{ secrets.CASEKING_CONVEX_URL }}
+          CASEKING_SYNC_SECRET: ${{ secrets.CASEKING_SYNC_SECRET }}
           LIVE: ${{ github.event.inputs.live || 'true' }}
           LIMIT: ${{ github.event.inputs.limit || 'all' }}
-          CLEANUP: ${{ github.event.inputs.cleanup || 'false' }}
+          CLEANUP: 'false'
           FORCE: ${{ github.event.inputs.force || 'false' }}
         run: node sync-caseking.mjs

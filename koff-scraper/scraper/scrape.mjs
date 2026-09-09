@@ -15,11 +15,14 @@ const KOFF_EMAIL = process.env.KOFF_EMAIL;
 const KOFF_PASSWORD = process.env.KOFF_PASSWORD;
 const CONVEX_URL = process.env.CONVEX_HTTP_URL; // напр. https://xxxxx.convex.site/ingest-products
 const SCRAPER_SECRET = process.env.SCRAPER_SECRET;
+const ENABLE_KOFF_CONVEX_INGEST = process.env.ENABLE_KOFF_CONVEX_INGEST === "true";
 
-if (!KOFF_EMAIL || !KOFF_PASSWORD || !CONVEX_URL || !SCRAPER_SECRET) {
-  console.error(
-    "Липсват задължителни env vars: KOFF_EMAIL, KOFF_PASSWORD, CONVEX_HTTP_URL, SCRAPER_SECRET"
-  );
+if (!KOFF_EMAIL || !KOFF_PASSWORD) {
+  console.error("Липсват задължителни env vars: KOFF_EMAIL, KOFF_PASSWORD");
+  process.exit(1);
+}
+if (ENABLE_KOFF_CONVEX_INGEST && (!CONVEX_URL || !SCRAPER_SECRET)) {
+  console.error("ENABLE_KOFF_CONVEX_INGEST изисква CONVEX_HTTP_URL и SCRAPER_SECRET");
   process.exit(1);
 }
 
@@ -239,6 +242,8 @@ function mapToConvexProduct(raw, categoryName) {
     return null;
   }
 
+  const stockCandidate = raw.stock ?? raw.stockQuantity ?? raw.availableQuantity ?? raw.quantity;
+  const stock = Number(stockCandidate);
   return {
     sourceId: raw.sku || String(raw.id),
     name: raw.name,
@@ -247,6 +252,7 @@ function mapToConvexProduct(raw, categoryName) {
     imageUrl: raw.coverUrl || undefined,
     category: categoryName,
     manufacturer: raw.manufacturer?.name || undefined,
+    ...(Number.isFinite(stock) && stock >= 0 ? { stock } : {}),
   };
 }
 
@@ -267,7 +273,8 @@ async function pushToConvex(products) {
       "Content-Type": "application/json",
       "x-scraper-secret": SCRAPER_SECRET,
     },
-    body: JSON.stringify({ products }),
+    // The optional legacy Koff Convex schema does not have the CaseKing stock field.
+    body: JSON.stringify({ products: products.map(({ stock, ...product }) => product) }),
   });
 
   if (!res.ok) {
@@ -333,7 +340,6 @@ async function main() {
   console.log(`Намерени ${categories.length} категории (всички нива).`);
 
   const uniqueCategoryNames = [...new Set(categories.map((c) => c.name))];
-  await pushCategories(uniqueCategoryNames);
 
   // sourceId -> продукт, за да не дублираме продукти, които се показват
   // в няколко категории едновременно (напр. родителска + подкатегория)
@@ -359,15 +365,6 @@ async function main() {
   const payload = [...productsById.values()];
   console.log(`Общо уникални продукти с валидна цена: ${payload.length}`);
 
-  const BATCH_SIZE = 200;
-  for (let i = 0; i < payload.length; i += BATCH_SIZE) {
-    await pushToConvex(payload.slice(i, i + BATCH_SIZE));
-  }
-
-  console.log("Всички партиди изпратени. Деактивирам остарели продукти...");
-  const deactivated = await finalizeIngest(runStartedAt);
-  console.log(`Общо деактивирани: ${deactivated}`);
-
   console.log("Генерирам Excel файлове за импорт в case-king.bg...");
   const withPrices = payload.map(withDisplayPrices);
   generateExports(withPrices, EXPORT_OUT_DIR);
@@ -377,6 +374,19 @@ async function main() {
     `${EXPORT_OUT_DIR}/koff-products-raw.json`,
     JSON.stringify(payload)
   );
+
+  // The CaseKing workflow consumes the local JSON directly. The old Koff
+  // Convex mirror is optional and uses its own, separate SCRAPER_SECRET.
+  if (ENABLE_KOFF_CONVEX_INGEST) {
+    await pushCategories(uniqueCategoryNames);
+    const BATCH_SIZE = 200;
+    for (let i = 0; i < payload.length; i += BATCH_SIZE) {
+      await pushToConvex(payload.slice(i, i + BATCH_SIZE));
+    }
+    console.log("Всички партиди изпратени. Деактивирам остарели продукти...");
+    const deactivated = await finalizeIngest(runStartedAt);
+    console.log(`Общо деактивирани: ${deactivated}`);
+  }
 
   console.log("Готово!");
 }
