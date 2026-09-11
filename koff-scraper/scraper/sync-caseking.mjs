@@ -17,6 +17,7 @@ import { CATEGORY_MAP } from "./category-map.mjs";
 import { parseProductName } from "./parse-names.mjs";
 import { extractBrandModelsFromFullSegment, isInvalidModel } from "./brand-model.mjs";
 import { calcB2BPrice, calcB2CPrice } from "./pricing.mjs";
+import { buildKoffImages } from "./image-urls.mjs";
 
 const OWNED_CASEKING_CONVEX_URL = "https://elated-butterfly-122.eu-west-1.convex.cloud";
 const CASEKING_CONVEX_URL = process.env.CASEKING_CONVEX_URL;
@@ -206,10 +207,13 @@ function buildCaseKingProducts(raw, categorySlug) {
     (raw.description && raw.description.trim()) ||
     `${baseTitle}. Премиум телефонен аксесоар от най-висок клас.`;
 
+  // Ако Koff не върне валидна снимка в този run (временна грешка/празен
+  // отговор), НЕ пращаме image/images изобщо - upsertBatch пази старата
+  // стойност на продукта непроменена вместо да я трие с празна/placeholder.
+  const koffImages = buildKoffImages(raw);
   const commonFields = {
     id: null,
-    image: raw.imageUrl || "assets/logo.webp",
-    images: raw.imageUrl ? [raw.imageUrl] : [],
+    ...(koffImages.length > 0 ? { image: koffImages[0], images: koffImages } : {}),
     rating: 5,
     tag: null,
     description,
