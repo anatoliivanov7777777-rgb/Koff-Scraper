@@ -18,7 +18,7 @@ import { parseProductName } from "./parse-names.mjs";
 import { extractBrandModelsFromFullSegment, isInvalidModel } from "./brand-model.mjs";
 import { calcB2BPrice, calcB2CPrice } from "./pricing.mjs";
 
-const OWNED_CASEKING_CONVEX_URL = "https://aware-toucan-771.eu-west-1.convex.cloud";
+const OWNED_CASEKING_CONVEX_URL = "https://elated-butterfly-122.eu-west-1.convex.cloud";
 const CASEKING_CONVEX_URL = process.env.CASEKING_CONVEX_URL;
 const CASEKING_SYNC_SECRET = process.env.CASEKING_SYNC_SECRET;
 
