@@ -1,0 +1,44 @@
+name: Koff fulfillment worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_live:
+        description: 'Confirm LIVE run (true = will claim one fulfillment and may write to the real Koff cart)'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: koff-cart-fulfillment
+  cancel-in-progress: false
+
+jobs:
+  fulfill:
+    if: ${{ github.event.inputs.confirm_live == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: koff-scraper/scraper
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install dependencies
+        run: npm install
+      - name: Run Koff fulfillment worker (claims and processes exactly one fulfillment)
+        env:
+          KOFF_EMAIL: ${{ secrets.KOFF_EMAIL }}
+          KOFF_PASSWORD: ${{ secrets.KOFF_PASSWORD }}
+          CASEKING_CONVEX_URL: ${{ secrets.CASEKING_CONVEX_URL }}
+          CASEKING_SYNC_SECRET: ${{ secrets.CASEKING_SYNC_SECRET }}
+          KOFF_CART_LIVE: 'true'
+        run: node koff-fulfillment-worker.mjs
