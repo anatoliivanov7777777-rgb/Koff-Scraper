@@ -5,6 +5,7 @@
 import fs from "fs";
 import { generateExports } from "./generate-exports.mjs";
 import { calcB2BPrice, calcB2CPrice } from "./pricing.mjs";
+import { mapToConvexProduct } from "./product-mapping.mjs";
 
 // Папка, в която се записват готовите .xlsx файлове за импорт в case-king.bg
 // (GitHub Actions ги качва като "artifact" след всеки run - виж workflow-а).
@@ -235,27 +236,6 @@ async function scrapeCategoryProducts(categoryId) {
   return products;
 }
 
-function mapToConvexProduct(raw, categoryName) {
-  const base = raw.salePrice ?? raw.basePrice;
-
-  if (base === null || base === undefined) {
-    return null;
-  }
-
-  const stockCandidate = raw.stock ?? raw.stockQuantity ?? raw.availableQuantity ?? raw.quantity;
-  const stock = Number(stockCandidate);
-  return {
-    sourceId: raw.sku || String(raw.id),
-    name: raw.name,
-    description: raw.description || "",
-    basePrice: base,
-    imageUrl: raw.coverUrl || undefined,
-    category: categoryName,
-    manufacturer: raw.manufacturer?.name || undefined,
-    ...(Number.isFinite(stock) && stock >= 0 ? { stock } : {}),
-  };
-}
-
 // Отделна версия САМО за Excel export-а (с изчислени цени) - НЕ се праща
 // към Convex, защото Convex стриктно отхвърля обекти с неочаквани полета.
 function withDisplayPrices(product) {
@@ -273,8 +253,9 @@ async function pushToConvex(products) {
       "Content-Type": "application/json",
       "x-scraper-secret": SCRAPER_SECRET,
     },
-    // The optional legacy Koff Convex schema does not have the CaseKing stock field.
-    body: JSON.stringify({ products: products.map(({ stock, ...product }) => product) }),
+    // The optional legacy Koff Convex schema has neither the CaseKing stock
+    // field nor sourceProductId.
+    body: JSON.stringify({ products: products.map(({ stock, sourceProductId, ...product }) => product) }),
   });
 
   if (!res.ok) {

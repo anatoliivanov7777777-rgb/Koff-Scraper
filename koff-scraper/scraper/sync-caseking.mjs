@@ -18,6 +18,7 @@ import { parseProductName } from "./parse-names.mjs";
 import { extractBrandModelsFromFullSegment, isInvalidModel } from "./brand-model.mjs";
 import { calcB2BPrice, calcB2CPrice } from "./pricing.mjs";
 import { buildKoffImages } from "./image-urls.mjs";
+import { pathToFileURL } from "node:url";
 
 const OWNED_CASEKING_CONVEX_URL = "https://elated-butterfly-122.eu-west-1.convex.cloud";
 const CASEKING_CONVEX_URL = process.env.CASEKING_CONVEX_URL;
@@ -192,7 +193,7 @@ function deviceLabel(brand, model) {
   return `${brand} ${cleanModel}`.replace(/\s+/g, " ").trim();
 }
 
-function buildCaseKingProducts(raw, categorySlug) {
+export function buildCaseKingProducts(raw, categorySlug) {
   const parsed = parseProductName(raw.name || "", raw.manufacturer);
   const color = parsed.color;
   const baseTitle = [raw.manufacturer, parsed.productLine, color]
@@ -224,6 +225,12 @@ function buildCaseKingProducts(raw, categorySlug) {
     oldPriceB2B: null,
     source: SOURCE_TAG,
     ...(Number.isFinite(raw.stock) && raw.stock >= 0 ? { stock: raw.stock } : {}),
+    // Koff's actual cart API product identifier (see product-mapping.mjs) -
+    // independent of sourceId/sourceKey, which stay SKU-based for stable
+    // sync identity. Omitted (not just left undefined) when invalid/absent,
+    // matching the image preserve-on-omit pattern in upsertBatch.
+    ...(Number.isInteger(raw.sourceProductId) && raw.sourceProductId > 0
+      ? { sourceProductId: raw.sourceProductId } : {}),
   };
 
   // Аксесоарни категории: един ред, марка = производителят на аксесоара.
@@ -502,7 +509,12 @@ async function main() {
   await refreshCategoryCounts(convex);
 }
 
-main().catch((err) => {
-  console.error("Синхронизацията гръмна:", err);
-  process.exit(1);
-});
+// Guarded so this module can be imported (e.g. from tests, to exercise
+// buildCaseKingProducts directly) without running the real sync - only
+// runs main() when this file is executed directly as a script.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    console.error("Синхронизацията гръмна:", err);
+    process.exit(1);
+  });
+}
