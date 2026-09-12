@@ -177,7 +177,11 @@ const EXTRA_CATEGORY_MAP = {
 const HYDROGEL_RE = /hydrogel|хидрогел/i;
 const HYDROGEL_SLUG = "hydrogel_film";
 
-function resolveCategorySlug(rawProduct) {
+// Exported (export-only change, no logic modified) so the Phase E
+// read-only analysis tool can reuse the exact real category-resolution
+// behavior instead of duplicating it - see
+// test/sync-caseking-exports.test.mjs for a behavior-unchanged check.
+export function resolveCategorySlug(rawProduct) {
   const koffCat = norm(rawProduct.category);
   const slug = CATEGORY_MAP[koffCat] || EXTRA_CATEGORY_MAP[koffCat];
   if (!slug) return null;
