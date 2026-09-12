@@ -19,6 +19,7 @@ import { extractBrandModelsFromFullSegment, isInvalidModel } from "./brand-model
 import { calcB2BPrice, calcB2CPrice } from "./pricing.mjs";
 import { buildKoffImages } from "./image-urls.mjs";
 import { resolvePublicMaker } from "./public-maker.mjs";
+import { generateProductName } from "./naming-engine.mjs";
 import { pathToFileURL } from "node:url";
 
 const OWNED_CASEKING_CONVEX_URL = "https://elated-butterfly-122.eu-west-1.convex.cloud";
@@ -202,18 +203,19 @@ function deviceLabel(brand, model) {
 export function buildCaseKingProducts(raw, categorySlug) {
   const parsed = parseProductName(raw.name || "", raw.manufacturer);
   const color = parsed.color;
-  const baseTitle = [raw.manufacturer, parsed.productLine, color]
-    .filter(Boolean)
-    .join(" - ");
 
-  // PHASE C: identity only - baseTitle/name above is intentionally left
-  // untouched by the rebrand. publicMaker is a purely additive, separate
-  // field; the Bulgarian naming engine (naming-engine.mjs) stays unwired
-  // until Phase D. See public-maker.mjs for the Techsuit precedence
-  // rules - manufacturer is authoritative, the raw-name leading token is
-  // only a fallback when manufacturer is missing/empty, and nothing here
-  // ever scans for "Techsuit" mid-string.
+  // See public-maker.mjs for the Techsuit precedence rules - manufacturer
+  // is authoritative, the raw-name leading token is only a fallback when
+  // manufacturer is missing/empty, and nothing here ever scans for
+  // "Techsuit" mid-string.
   const makerResolution = resolvePublicMaker({ manufacturer: raw.manufacturer, rawName: raw.name });
+
+  // The public product `name` is now the naming engine's deterministic
+  // Bulgarian SEO output, never the raw supplier title - see the
+  // generateProductName() calls below. The real koff.ro category name it
+  // needs for structured type classification is raw.category itself -
+  // the same field resolveCategorySlug already reads.
+  const sourceCategoryName = raw.category;
 
   const base = raw.basePrice * VAT_MULTIPLIER;
   const priceB2B = calcB2BPrice(base);
@@ -260,17 +262,30 @@ export function buildCaseKingProducts(raw, categorySlug) {
     // of updated.
     const accBrand = normalizeAccessoryBrand(raw.manufacturer);
     const publicAccessoryMaker = makerResolution.rebranded ? "CaseKing" : (accBrand || undefined);
+    // No device-compatibility clause for accessory rows - they aren't
+    // sold "for" a specific phone model (see the comment above this
+    // branch), so deviceModel is intentionally omitted from this call.
+    const nameResult = generateProductName({
+      categorySlug,
+      sourceCategoryName,
+      publicMaker: publicAccessoryMaker,
+      productLine: parsed.productLine,
+      color,
+    });
     return [
       {
         ...commonFields,
         category: categorySlug,
-        name: baseTitle,
+        name: nameResult.name,
         brand: makerResolution.rebranded ? "CaseKing" : (accBrand || "Всички марки"),
         model: "Всички модели",
         sourceKey: `${SOURCE_TAG}:${raw.sourceId}:${categorySlug}:${accBrand || "all"}:all`,
         ...(publicAccessoryMaker !== undefined ? { publicMaker: publicAccessoryMaker } : {}),
         // локален флаг - определя type на марката при създаването ѝ
         _isAccessory: Boolean(accBrand),
+        // local-only diagnostics for the Phase E dry-run report - never
+        // sent to Convex, stripped alongside _isWatch/_isAccessory below.
+        _namingWarnings: nameResult.warnings,
       },
     ];
   }
@@ -283,15 +298,27 @@ export function buildCaseKingProducts(raw, categorySlug) {
   }
 
   if (brandModels.length === 0) {
+    // No verified device was resolved - never fabricate a "за ..."
+    // clause or generic "universal"/"for all phones" wording (see
+    // buildDeviceClause in naming-engine.mjs: omitting deviceModel here
+    // already guarantees no such clause is added).
+    const nameResult = generateProductName({
+      categorySlug,
+      sourceCategoryName,
+      publicMaker: makerResolution.publicMaker,
+      productLine: parsed.productLine,
+      color,
+    });
     return [
       {
         ...commonFields,
         category: categorySlug,
-        name: baseTitle,
+        name: nameResult.name,
         brand: "Всички марки",
         model: "Всички модели",
         sourceKey: `${SOURCE_TAG}:${raw.sourceId}:${categorySlug}:all:all`,
         ...(makerResolution.publicMaker !== undefined ? { publicMaker: makerResolution.publicMaker } : {}),
+        _namingWarnings: nameResult.warnings,
       },
     ];
   }
@@ -306,24 +333,43 @@ export function buildCaseKingProducts(raw, categorySlug) {
     }
   }
 
-  return unique.map((bm) => ({
-    ...commonFields,
-    category: bm.isWatch ? WATCH_CATEGORY_SLUG : categorySlug,
-    // Добавяме съвместимото устройство в самото име, за да може да се
-    // намери през търсачката на сайта (напр. търсене "iPhone 15 Pro").
-    name: `${baseTitle} (за ${deviceLabel(bm.brand, bm.model)})`,
-    // brand/model stay the COMPATIBLE-DEVICE identity (e.g. Apple/iPhone
-    // 16 Pro Max) - unaffected by any manufacturer rebrand, exactly as
-    // before. sourceKey below is built from the same device brand/model,
-    // never from makerResolution's public value.
-    brand: bm.brand,
-    model: bm.model,
-    sourceKey: `${SOURCE_TAG}:${raw.sourceId}:${bm.isWatch ? WATCH_CATEGORY_SLUG : categorySlug}:${bm.brand}:${bm.model}`,
-    ...(makerResolution.publicMaker !== undefined ? { publicMaker: makerResolution.publicMaker } : {}),
-    // не се праща към Convex - ползва се само локално, за да знаем какъв
-    // type да зададем на марката/модела при създаването им
-    _isWatch: bm.isWatch,
-  }));
+  return unique.map((bm) => {
+    // Reuses the existing, already-verified compatibility label exactly
+    // as before (see deviceLabel above) - no new device/model parser is
+    // introduced in this phase.
+    const resolvedDeviceLabel = deviceLabel(bm.brand, bm.model);
+    // IMPORTANT: naming TYPE classification always uses the ORIGINAL
+    // categorySlug (e.g. keysove-i-kalufi), even for a row whose STORED
+    // category becomes the watch slug below - a phone/watch case must
+    // still be named "Калъф ... за <watch>", not a generic watch
+    // "Аксесоар ...". Only the stored `category`/sourceKey use the
+    // watch-remapped slug, exactly as before.
+    const nameResult = generateProductName({
+      categorySlug,
+      sourceCategoryName,
+      publicMaker: makerResolution.publicMaker,
+      productLine: parsed.productLine,
+      deviceModel: resolvedDeviceLabel,
+      color,
+    });
+    return {
+      ...commonFields,
+      category: bm.isWatch ? WATCH_CATEGORY_SLUG : categorySlug,
+      name: nameResult.name,
+      // brand/model stay the COMPATIBLE-DEVICE identity (e.g. Apple/iPhone
+      // 16 Pro Max) - unaffected by any manufacturer rebrand, exactly as
+      // before. sourceKey below is built from the same device brand/model,
+      // never from makerResolution's public value.
+      brand: bm.brand,
+      model: bm.model,
+      sourceKey: `${SOURCE_TAG}:${raw.sourceId}:${bm.isWatch ? WATCH_CATEGORY_SLUG : categorySlug}:${bm.brand}:${bm.model}`,
+      ...(makerResolution.publicMaker !== undefined ? { publicMaker: makerResolution.publicMaker } : {}),
+      // не се праща към Convex - ползва се само локално, за да знаем какъв
+      // type да зададем на марката/модела при създаването им
+      _isWatch: bm.isWatch,
+      _namingWarnings: nameResult.warnings,
+    };
+  });
 }
 
 async function runBackfillMigration(convex) {
@@ -522,7 +568,7 @@ async function main() {
   for (let i = 0; i < caseKingProducts.length; i += CHUNK) {
     const chunk = caseKingProducts
       .slice(i, i + CHUNK)
-      .map(({ _isWatch, _isAccessory, ...rest }) => rest);
+      .map(({ _isWatch, _isAccessory, _namingWarnings, ...rest }) => rest);
     const res = await syncMutation(convex, "products:upsertBatch", { products: chunk });
     totalCreated += res.createdCount || 0;
     totalUpdated += res.updatedCount || 0;

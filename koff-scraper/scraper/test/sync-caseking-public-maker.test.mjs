@@ -82,19 +82,16 @@ test("image behavior is unchanged for a Techsuit item (omitted when Koff returns
   assert.equal("images" in product, false);
 });
 
-test("name/baseTitle is unchanged in Phase C - still the raw supplier-derived title, not a naming-engine output", () => {
+test("name is now the naming engine's deterministic Bulgarian SEO output (Phase D), using the resolved public maker", () => {
   const [product] = buildCaseKingProducts(rawPhoneCase(), "keysove-i-kalufi");
-  assert.match(product.name, /^Techsuit - CamShield Pro - Black \(за/);
-  assert.doesNotMatch(product.name, /^Калъф/);
+  assert.match(product.name, /^Калъф CaseKing CamShield Pro за/);
+  assert.doesNotMatch(product.name, /^Techsuit/);
 });
 
-test("naming-engine.mjs is NOT imported/wired into sync-caseking.mjs yet", () => {
+test("naming-engine.mjs IS now imported/wired into sync-caseking.mjs (Phase D)", () => {
   const source = readFileSync(new URL("../sync-caseking.mjs", import.meta.url), "utf8");
-  // A mention in an explanatory comment (e.g. "Phase D will wire
-  // naming-engine.mjs") is fine and expected - what must NOT exist is an
-  // actual import statement or a call to its exported function.
-  assert.doesNotMatch(source, /from\s+["']\.\/naming-engine\.mjs["']/);
-  assert.doesNotMatch(source, /generateProductName\(/);
+  assert.match(source, /from\s+["']\.\/naming-engine\.mjs["']/);
+  assert.match(source, /generateProductName\(/);
 });
 
 test("no blind global Techsuit string replace exists in sync-caseking.mjs", () => {
