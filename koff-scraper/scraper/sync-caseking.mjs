@@ -18,6 +18,7 @@ import { parseProductName } from "./parse-names.mjs";
 import { extractBrandModelsFromFullSegment, isInvalidModel } from "./brand-model.mjs";
 import { calcB2BPrice, calcB2CPrice } from "./pricing.mjs";
 import { buildKoffImages } from "./image-urls.mjs";
+import { resolvePublicMaker } from "./public-maker.mjs";
 import { pathToFileURL } from "node:url";
 
 const OWNED_CASEKING_CONVEX_URL = "https://elated-butterfly-122.eu-west-1.convex.cloud";
@@ -205,6 +206,15 @@ export function buildCaseKingProducts(raw, categorySlug) {
     .filter(Boolean)
     .join(" - ");
 
+  // PHASE C: identity only - baseTitle/name above is intentionally left
+  // untouched by the rebrand. publicMaker is a purely additive, separate
+  // field; the Bulgarian naming engine (naming-engine.mjs) stays unwired
+  // until Phase D. See public-maker.mjs for the Techsuit precedence
+  // rules - manufacturer is authoritative, the raw-name leading token is
+  // only a fallback when manufacturer is missing/empty, and nothing here
+  // ever scans for "Techsuit" mid-string.
+  const makerResolution = resolvePublicMaker({ manufacturer: raw.manufacturer, rawName: raw.name });
+
   const base = raw.basePrice * VAT_MULTIPLIER;
   const priceB2B = calcB2BPrice(base);
   const priceB2C = calcB2CPrice(base);
@@ -242,15 +252,23 @@ export function buildCaseKingProducts(raw, categorySlug) {
   // Съвместимите телефони НЕ се изброяват - нито като отделни редове,
   // нито в името (клиентът избира Зарядни > Mcdodo, не Зарядни > iPhone).
   if (ACCESSORY_CATEGORY_SLUGS.has(categorySlug)) {
+    // accBrand is the ORIGINAL/unrebranded supplier accessory-brand
+    // identity (already casing-canonicalized, e.g. "mcdodo" -> "Mcdodo")
+    // - sourceKey below MUST keep using it exactly as before, never the
+    // rebranded public value, or an existing Techsuit accessory row
+    // would stop matching on the next sync and get duplicated instead
+    // of updated.
     const accBrand = normalizeAccessoryBrand(raw.manufacturer);
+    const publicAccessoryMaker = makerResolution.rebranded ? "CaseKing" : (accBrand || undefined);
     return [
       {
         ...commonFields,
         category: categorySlug,
         name: baseTitle,
-        brand: accBrand || "Всички марки",
+        brand: makerResolution.rebranded ? "CaseKing" : (accBrand || "Всички марки"),
         model: "Всички модели",
         sourceKey: `${SOURCE_TAG}:${raw.sourceId}:${categorySlug}:${accBrand || "all"}:all`,
+        ...(publicAccessoryMaker !== undefined ? { publicMaker: publicAccessoryMaker } : {}),
         // локален флаг - определя type на марката при създаването ѝ
         _isAccessory: Boolean(accBrand),
       },
@@ -273,6 +291,7 @@ export function buildCaseKingProducts(raw, categorySlug) {
         brand: "Всички марки",
         model: "Всички модели",
         sourceKey: `${SOURCE_TAG}:${raw.sourceId}:${categorySlug}:all:all`,
+        ...(makerResolution.publicMaker !== undefined ? { publicMaker: makerResolution.publicMaker } : {}),
       },
     ];
   }
@@ -293,9 +312,14 @@ export function buildCaseKingProducts(raw, categorySlug) {
     // Добавяме съвместимото устройство в самото име, за да може да се
     // намери през търсачката на сайта (напр. търсене "iPhone 15 Pro").
     name: `${baseTitle} (за ${deviceLabel(bm.brand, bm.model)})`,
+    // brand/model stay the COMPATIBLE-DEVICE identity (e.g. Apple/iPhone
+    // 16 Pro Max) - unaffected by any manufacturer rebrand, exactly as
+    // before. sourceKey below is built from the same device brand/model,
+    // never from makerResolution's public value.
     brand: bm.brand,
     model: bm.model,
     sourceKey: `${SOURCE_TAG}:${raw.sourceId}:${bm.isWatch ? WATCH_CATEGORY_SLUG : categorySlug}:${bm.brand}:${bm.model}`,
+    ...(makerResolution.publicMaker !== undefined ? { publicMaker: makerResolution.publicMaker } : {}),
     // не се праща към Convex - ползва се само локално, за да знаем какъв
     // type да зададем на марката/модела при създаването им
     _isWatch: bm.isWatch,
