@@ -1,8 +1,11 @@
-name: Scrape koff.ro daily
+name: Scrape koff.ro (manual)
 
+# Manual-only: sync-caseking.yml already performs its own scrape before
+# the approved weekly CaseKing sync, so a separate automatic daily
+# schedule here would be redundant. This workflow exists for on-demand
+# scrape/export runs (e.g. producing a fresh koff-products-raw.json for
+# offline analysis) - it never touches CaseKing/Convex/Koff cart.
 on:
-  schedule:
-    - cron: "0 17 * * *"
   workflow_dispatch: {}
 
 jobs:
@@ -33,3 +36,9 @@ jobs:
             koff-scraper/scraper/koff-import-gotovi.xlsx
             koff-scraper/scraper/koff-import-chakashti-kategorii.xlsx
           retention-days: 14
+      - name: Качване на суровия каталог (koff-products-raw.json) като отделен artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: koff-raw-catalog-${{ github.run_id }}
+          path: koff-scraper/scraper/koff-products-raw.json
+          retention-days: 1
