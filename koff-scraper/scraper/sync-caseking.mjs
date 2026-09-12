@@ -120,11 +120,16 @@ function normalizeAccessoryBrand(name) {
 const VAT_RATE = 0.20;
 const VAT_MULTIPLIER = 1 + VAT_RATE;
 
+// Koff не дава структурирани material/weight/origin/delivery данни за
+// всеки продукт - празен низ означава "непознато", НЕ фабрикуван факт.
+// Никога не замествай с генерично "Не е посочено"/"Внос"/"Високо
+// качество" и т.н. - това би било също толкова невярно, колкото
+// оригиналните фабрикувани стойности.
 const DEFAULT_SPECS = {
-  material: "Премиум силикон / TPU / Кожа",
-  weight: "30г",
-  origin: "Румъния",
-  delivery: "Доставка 3-4 работни дни с преглед (без тест)",
+  material: "",
+  weight: "",
+  origin: "",
+  delivery: "",
 };
 
 function norm(s) {
@@ -204,9 +209,9 @@ export function buildCaseKingProducts(raw, categorySlug) {
   const priceB2B = calcB2BPrice(base);
   const priceB2C = calcB2CPrice(base);
 
-  const description =
-    (raw.description && raw.description.trim()) ||
-    `${baseTitle}. Премиум телефонен аксесоар от най-висок клас.`;
+  // Пази реалното описание на доставчика, ако има такова - никога не
+  // фабрикува промоционален текст, когато Koff не е върнал описание.
+  const description = (raw.description && raw.description.trim()) || "";
 
   // Ако Koff не върне валидна снимка в този run (временна грешка/празен
   // отговор), НЕ пращаме image/images изобщо - upsertBatch пази старата
