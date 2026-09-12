@@ -191,17 +191,64 @@ export function resolveCategorySlug(rawProduct) {
   return slug;
 }
 
-// Сглобява "марка + модел" за добавката в името, без да повтаря дума.
-// При часовниците марката е напр. "Samsung Watch", а моделът "Watch
-// Ultra 2" - наивното слепване даваше "Samsung Watch Watch Ultra 2".
-function deviceLabel(brand, model) {
-  const brandWords = brand.trim().split(/\s+/);
+// Сглобява storefront DISPLAY етикета "марка + модел" за компатибилното
+// устройство. Изцяло presentation-layer: НЕ променя стойностите, които
+// се пазят (bm.brand/bm.model, използвани от sourceKey) - само низа,
+// подаван на naming-engine.mjs като deviceModel. Правила (Phase E2, въз
+// основа на реални данни от пълния каталог):
+//
+// - Apple (не часовник): моделът сам по себе си е разпознаваем
+//   (iPhone/iPad/MacBook/AirPods) - марката не се добавя ("iPhone 16 Pro
+//   Max", не "Apple iPhone 16 Pro Max").
+// - Samsung (не часовник): реалният текст на модела понякога вече
+//   съдържа "Galaxy" (Z Fold/Flip), понякога не ("S25 Ultra") - винаги
+//   показва "Samsung Galaxy ..." точно веднъж, никога дублирано.
+// - MOTO: съхраняваната марка идентичност остава "MOTO" (непроменена
+//   тук) - само display показва истинското име "Motorola Moto ...".
+// - Всяка "<X> Watch" марка (Apple Watch, Samsung Watch, Google Watch,
+//   Xiaomi Watch, Huawei Watch, Honor Watch): старата логика махаше
+//   дублирана дума САМО ако е точно в началото на модела И следвана от
+//   интервал - пропускаше "Watch9" (без интервал преди цифрата) и
+//   "Pixel Watch 5 45mm" (думата "Watch" не е в началото). Сега маха
+//   думата "Watch" от марката винаги когато моделът я споменава ГДЕ да е.
+// Exported (export-only, same pattern as resolveCategorySlug) so
+// test/sync-caseking-device-labels.test.mjs can verify each rule
+// directly without reconstructing full raw-product fixtures.
+export function deviceLabel(brand, model) {
+  const trimmedBrand = brand.trim();
+  const trimmedModel = model.trim();
+
+  if (trimmedBrand === "Apple") {
+    return trimmedModel;
+  }
+
+  if (trimmedBrand === "Samsung") {
+    const withoutLeadingGalaxy = trimmedModel.replace(/^Galaxy\s+/i, "");
+    return `Samsung Galaxy ${withoutLeadingGalaxy}`.replace(/\s+/g, " ").trim();
+  }
+
+  if (trimmedBrand === "MOTO") {
+    const withoutLeadingMoto = trimmedModel.replace(/^Moto\s+/i, "");
+    return `Motorola Moto ${withoutLeadingMoto}`.replace(/\s+/g, " ").trim();
+  }
+
+  if (/\bWatch$/i.test(trimmedBrand)) {
+    const brandRoot = trimmedBrand.replace(/\s*Watch$/i, "").trim();
+    const modelAlreadyMentionsWatch = /watch/i.test(trimmedModel);
+    const label = modelAlreadyMentionsWatch
+      ? `${brandRoot} ${trimmedModel}`
+      : `${brandRoot} Watch ${trimmedModel}`;
+    return label.replace(/\s+/g, " ").trim();
+  }
+
+  // Всички други марки - непроменено предишно поведение.
+  const brandWords = trimmedBrand.split(/\s+/);
   const lastWord = brandWords[brandWords.length - 1];
   const dupRe = new RegExp(`^${lastWord}\\s+`, "i");
-  const cleanModel = dupRe.test(model.trim())
-    ? model.trim().replace(dupRe, "")
-    : model.trim();
-  return `${brand} ${cleanModel}`.replace(/\s+/g, " ").trim();
+  const cleanModel = dupRe.test(trimmedModel)
+    ? trimmedModel.replace(dupRe, "")
+    : trimmedModel;
+  return `${trimmedBrand} ${cleanModel}`.replace(/\s+/g, " ").trim();
 }
 
 export function buildCaseKingProducts(raw, categorySlug) {

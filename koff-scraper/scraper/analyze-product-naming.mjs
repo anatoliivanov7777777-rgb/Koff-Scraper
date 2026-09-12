@@ -185,12 +185,22 @@ for (const { row, raw } of rows) {
 // ---------------------------------------------------------------------
 // naming warnings
 // ---------------------------------------------------------------------
+// Curated (Phase E2), NOT auto-detected: values that are demonstrably a
+// product VARIANT/FEATURE token rather than an actual color - e.g.
+// "Privacy" on a screen protector means the privacy-filter variant, not
+// a color. Adding a fake color translation just to silence this warning
+// would misrepresent the product, so these are reported separately
+// instead - never mapped in color-map.mjs.
+const NON_COLOR_VARIANT_TOKENS = new Set(["privacy"]);
+
 let rowsWithWarnings = 0;
 const warningsByType = new Map();
 const warningsByCategory = new Map();
 const unknownColorCounts = new Map(); // color value -> count
 const unknownColorExamples = new Map(); // color value -> [example names]
+const nonColorVariantCounts = new Map(); // token value -> count
 let unknownColorWarnings = 0;
+let nonColorVariantWarnings = 0;
 let genericFallbackWarnings = 0;
 let otherWarnings = 0;
 
@@ -201,13 +211,19 @@ for (const { row } of rows) {
     bump(warningsByCategory, row.category);
     const colorMatch = w.match(/^Unrecognized color "(.*)" preserved without translation$/);
     if (colorMatch) {
-      unknownColorWarnings++;
-      bump(warningsByType, "unknown/untranslated color");
       const colorVal = colorMatch[1];
-      bump(unknownColorCounts, colorVal);
-      if (!unknownColorExamples.has(colorVal)) unknownColorExamples.set(colorVal, []);
-      const list = unknownColorExamples.get(colorVal);
-      if (list.length < 3) list.push(row.name);
+      if (NON_COLOR_VARIANT_TOKENS.has(colorVal.trim().toLowerCase())) {
+        nonColorVariantWarnings++;
+        bump(warningsByType, "non-color variant/feature token (not a real color)");
+        bump(nonColorVariantCounts, colorVal);
+      } else {
+        unknownColorWarnings++;
+        bump(warningsByType, "unknown/untranslated color");
+        bump(unknownColorCounts, colorVal);
+        if (!unknownColorExamples.has(colorVal)) unknownColorExamples.set(colorVal, []);
+        const list = unknownColorExamples.get(colorVal);
+        if (list.length < 3) list.push(row.name);
+      }
     } else if (/^(Ambiguous category|Unknown or unmapped categorySlug)/.test(w)) {
       genericFallbackWarnings++;
       bump(warningsByType, "generic/fallback product type");
@@ -545,10 +561,12 @@ const report = {
     rowsWithWarnings,
     warningRatePercent: rows.length ? +((rowsWithWarnings / rows.length) * 100).toFixed(2) : 0,
     unknownColorWarnings,
+    nonColorVariantWarnings,
     genericFallbackWarnings,
     otherWarnings,
     byType: topN(warningsByType, 40),
     byCategory: topN(warningsByCategory, 20),
+    nonColorVariantTokens: topN(nonColorVariantCounts, 20),
     top50UnknownColors: topN(unknownColorCounts, 50).map(([color, count]) => ({
       color, count, examples: unknownColorExamples.get(color) || [],
     })),

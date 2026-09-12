@@ -89,17 +89,17 @@ test("6. exact device suffix preserved: Pro Max", () => {
 });
 
 test("7. Samsung Ultra compatibility survives", () => {
-  // brand-model.mjs's existing Samsung parsing strips the "Galaxy" token
-  // (pre-existing, untouched behavior) - what matters here is that the
-  // "Ultra" suffix survives into the generated name, not the exact
-  // device-label wording (Phase E will refine that).
+  // Phase E2: deviceLabel() now always shows "Samsung Galaxy ..." exactly
+  // once, regardless of whether brand-model.mjs's parsing stripped the
+  // "Galaxy" token from the stored model - this is a display-only fix,
+  // stored brand/model stay whatever brand-model.mjs produced.
   const raw = rawPhoneCase({
     name: "Ringke - Fusion X - Samsung Galaxy S25 Ultra - Black",
     manufacturer: "Ringke",
     category: "Fusion X",
   });
   const [product] = buildCaseKingProducts(raw, "keysove-i-kalufi");
-  assert.match(product.name, /Samsung S25 Ultra/);
+  assert.match(product.name, /Samsung Galaxy S25 Ultra/);
 });
 
 test("8. FE / 5G survive", () => {
@@ -109,7 +109,7 @@ test("8. FE / 5G survive", () => {
     category: "Liquid Air",
   });
   const [feProduct] = buildCaseKingProducts(feRaw, "keysove-i-kalufi");
-  assert.match(feProduct.name, /Samsung S23 FE/);
+  assert.match(feProduct.name, /Samsung Galaxy S23 FE/);
 
   const gRaw = rawPhoneCase({
     name: "Nillkin - Frosty Series - Moto G84 5G - Black",
@@ -117,10 +117,10 @@ test("8. FE / 5G survive", () => {
     category: "Frosty Series",
   });
   const [gProduct] = buildCaseKingProducts(gRaw, "keysove-i-kalufi");
-  // brand-model.mjs's existing Motorola rule uses the literal brand
-  // string "MOTO" (pre-existing, untouched) - the "5G" suffix surviving
-  // is what this test cares about.
-  assert.match(gProduct.name, /G84 5G/);
+  // Phase E2: display now shows the real brand name "Motorola Moto ..."
+  // instead of the bare stored "MOTO" identity string - the "5G" suffix
+  // still survives either way.
+  assert.match(gProduct.name, /Motorola Moto G84 5G/);
 });
 
 test("9. universal/unresolved product gets no fabricated \"за ...\" clause", () => {

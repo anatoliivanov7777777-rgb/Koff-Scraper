@@ -438,3 +438,47 @@ test("Matte Black is recognized as its own distinct entry, not conflated with pl
   assert.equal(normalizeColor("Matte Black"), "матово черен");
   assert.notEqual(normalizeColor("Matte Black"), normalizeColor("Black"));
 });
+
+// --- Phase E2: conservative additions from real full-catalog frequency data ---
+
+test("Phase E2 safe color aliases normalize correctly", () => {
+  assert.equal(normalizeColor("Navy Blue"), "тъмносин");
+  assert.equal(normalizeColor("Deep Blue"), "тъмносин");
+  assert.equal(normalizeColor("Sky Blue"), "светлосин");
+  assert.equal(normalizeColor("Deep Green"), "тъмнозелен");
+  assert.equal(normalizeColor("Light Green"), "светлозелен");
+  assert.equal(normalizeColor("Mint Green"), "мента");
+  assert.equal(normalizeColor("Light Purple"), "светлолилав");
+  assert.equal(normalizeColor("Dark Purple"), "тъмнолилав");
+  assert.equal(normalizeColor("Light Pink"), "светлорозов");
+  assert.equal(normalizeColor("Burgundy"), "бордо");
+  assert.equal(normalizeColor("Bordeaux"), "бордо");
+  assert.equal(normalizeColor("Wine Red"), "бордо");
+  assert.equal(normalizeColor("Bleu"), "син");
+  assert.equal(normalizeColor("Turquoise"), "тюркоаз");
+  assert.equal(normalizeColor("Khaki"), "каки");
+});
+
+test("Phase E2 unknown branded/finish descriptors remain deliberately untranslated", () => {
+  for (const value of [
+    "Smoke Black", "Frosted Black", "Hot Pink", "Plum Red", "Matcha",
+    "Blueberry Navy", "Vibrant Blue", "Titanium", "Natural Titanium",
+    "Camo Green", "Gunmetal", "Crystal Clear",
+  ]) {
+    assert.equal(normalizeColor(value), null, `expected "${value}" to stay untranslated`);
+  }
+});
+
+test("Phase E2: \"Privacy\" is a non-color variant token and must never be translated as a color", () => {
+  assert.equal(normalizeColor("Privacy"), null);
+  const result = generateProductName({
+    categorySlug: "protektori-za-ekran",
+    publicMaker: "Lito",
+    productLine: "2.5D Classic Glass",
+    deviceModel: "iPhone 18 Pro",
+    color: "Privacy",
+  });
+  // preserved verbatim, never mistranslated into a fabricated color word
+  assert.match(result.name, /Privacy$/);
+  assert.equal(result.normalizedColor, null);
+});
