@@ -247,7 +247,19 @@ function processSlashGroup(text) {
       : /^(Pro|Plus|Max|Mini|Ultra|Pro Max|FE|Lite|Air|\d+G)$/i;
 
     let modelText = rawModel;
-    if (currentRoot && /^\d/.test(part)) {
+    const rootTokens = currentRoot.split(/\s+/).filter(Boolean);
+    const rootTail = rootTokens.at(-1);
+    if (
+      currentIsWatch
+      && /^Watch\s+Fit$/i.test(currentRoot)
+      && rootTail
+      && new RegExp(`^${rootTail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+\\d`, "i").test(part)
+    ) {
+      // Koff съкращава общия часовников префикс след първия модел:
+      // "Huawei Watch Fit 5 Pro / Fit 5". Възстановяваме само липсващата
+      // част от доказания "Watch Fit" token root, без да измисляме модел.
+      modelText = `${rootTokens.slice(0, -1).join(" ")} ${part}`;
+    } else if (currentRoot && /^\d/.test(part)) {
       modelText = `${currentRoot} ${part}`;
     } else if (!currentIsWatch && currentRoot && /^SE(\s+\d+)?$/i.test(part.trim())) {
       // "SE" / "SE 2" при ТЕЛЕФОНИ означава "iPhone SE 2" (при часовници
@@ -273,6 +285,12 @@ function processSlashGroup(text) {
     }
     const finalModel = normalizeSuffixes(modelText);
     currentFullModel = finalModel;
+    if (currentIsWatch && /^Ultra$/i.test(finalModel)) {
+      // При "Apple Watch ... / Ultra / 2 / 3 / 4" bare numeric частите
+      // продължават непосредствения watch token "Ultra", не стария "Watch".
+      // Обновяването е тясно ограничено до доказаната Ultra структура.
+      currentRoot = finalModel;
+    }
     const finalBrand = currentIsWatch ? remapWatchBrand(currentBrand) : currentBrand;
     results.push({
       brand: finalBrand,
