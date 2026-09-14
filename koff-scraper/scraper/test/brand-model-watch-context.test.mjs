@@ -45,8 +45,12 @@ test("ordinary slash-separated phone models keep their existing behavior", () =>
 });
 
 test("existing Samsung, Xiaomi, Google and Honor watch roots remain stable", () => {
+  // "Watch4" (no space) now canonicalizes to "Watch 4" - see
+  // brand-model-corrupted-continuation.test.mjs for the full regression
+  // coverage of this fix (real raw catalog data mixes "Watch4"/"Watch 4"
+  // for the same device, which had created two separate catalog models).
   assert.deepEqual(identities("Samsung Galaxy Watch4/5/6"), [
-    "Samsung Watch:Watch4",
+    "Samsung Watch:Watch 4",
     "Samsung Watch:Watch 5",
     "Samsung Watch:Watch 6",
   ]);
