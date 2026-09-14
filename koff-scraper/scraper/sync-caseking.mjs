@@ -251,6 +251,16 @@ export function deviceLabel(brand, model) {
   return `${trimmedBrand} ${cleanModel}`.replace(/\s+/g, " ").trim();
 }
 
+// A generated row counts as sellable only when the supplier actually
+// reported a usable positive quantity. Stock is omitted entirely from a
+// generated row when Koff returned nothing verifiable (see commonFields
+// below), so "missing" and "zero" both land here as NOT sellable - the
+// same test the CaseKing-side availability guard in products:upsertBatch
+// applies before creating a brand-new product.
+export function isSellable(row) {
+  return Number.isFinite(row?.stock) && row.stock > 0;
+}
+
 export function buildCaseKingProducts(raw, categorySlug) {
   const parsed = parseProductName(raw.name || "", raw.manufacturer);
   const color = parsed.color;
@@ -582,6 +592,21 @@ async function main() {
   let newModels = 0;
 
   for (const p of caseKingProducts) {
+    // Only SELLABLE rows may introduce NEW brand/model metadata.
+    //
+    // A zero-stock (or unverified-stock) row is one of two things: an item
+    // CaseKing already sells, whose brand/model metadata therefore already
+    // exists from its earlier sellable state; or a brand-new supplier item
+    // that products:upsertBatch will refuse to create (the availability
+    // guard). Creating dropdown entries for the latter would advertise
+    // brands and models with no buyable product behind them.
+    //
+    // This filter is metadata-only. The product upsert further below still
+    // receives EVERY generated row, because existing products must keep
+    // receiving stock updates - including stock = 0, so a sold-out item
+    // stops showing as available.
+    if (!isSellable(p)) continue;
+
     if (p.brand !== "Всички марки") {
       const brandLower = p.brand.toLowerCase();
       if (!brandsCache.has(brandLower)) {
