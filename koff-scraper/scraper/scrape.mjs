@@ -108,7 +108,9 @@ async function pushToConvex(products) {
     },
     // The optional legacy Koff Convex schema has neither the CaseKing stock
     // field nor sourceProductId.
-    body: JSON.stringify({ products: products.map(({ stock, sourceProductId, ...product }) => product) }),
+    body: JSON.stringify({
+      products: products.map(({ stock, sourceProductId, max, isEol, ...product }) => product),
+    }),
   });
 
   if (!res.ok) {

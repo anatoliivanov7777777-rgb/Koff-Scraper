@@ -239,17 +239,91 @@ test("product type: car holder via exact allow-listed source category", () => {
   assert.equal(result.warnings.length, 0);
 });
 
-test("product type: ambiguous car category without exact-known sourceCategoryName falls back safely with a warning", () => {
+test("product type: ambiguous car category without exact-known sourceCategoryName falls back safely (car-specific fallback) with a warning", () => {
   const result = generateProductName({
     categorySlug: "aksesoari-za-avtomobili",
     sourceCategoryName: "Car Gadgets",
   });
-  assert.equal(result.productType, "Аксесоар");
+  assert.equal(result.productType, "Автомобилен аксесоар");
   assert.ok(result.warnings.length > 0);
 });
 
 test("product type: stand (postavki-za-byuro)", () => {
   assert.equal(generateProductName({ categorySlug: "postavki-za-byuro" }).productType, "Стойка");
+});
+
+test("product type: hydrogel film (unambiguous - already disambiguated upstream)", () => {
+  assert.equal(generateProductName({ categorySlug: "hydrogel_film" }).productType, "Хидрогел фолио");
+});
+
+test("product type: selfie stick accessory (unambiguous)", () => {
+  assert.equal(generateProductName({ categorySlug: "selfi-stikove" }).productType, "Аксесоар за селфи");
+});
+
+test("product type: memory card exact classifications", () => {
+  assert.equal(
+    generateProductName({ categorySlug: "memory_cards", sourceCategoryName: "Memory cards" }).productType,
+    "Карта памет"
+  );
+  assert.equal(
+    generateProductName({ categorySlug: "memory_cards", sourceCategoryName: "Memory sticks" }).productType,
+    "USB памет"
+  );
+  assert.equal(
+    generateProductName({ categorySlug: "memory_cards", sourceCategoryName: "Card readers" }).productType,
+    "Четец за карти"
+  );
+  assert.equal(
+    generateProductName({ categorySlug: "memory_cards", sourceCategoryName: "Solid-State Drive (SSD)" }).productType,
+    "SSD"
+  );
+});
+
+test("product type: ambiguous memory category falls back to the broader storage-device type with a warning", () => {
+  const result = generateProductName({
+    categorySlug: "memory_cards",
+    sourceCategoryName: "Memory & Storage Devices",
+  });
+  assert.equal(result.productType, "Устройство за съхранение");
+  assert.ok(result.warnings.length > 0);
+});
+
+test("product type: audio cable exact classifications", () => {
+  assert.equal(
+    generateProductName({ categorySlug: "audio_cables", sourceCategoryName: "Jack 3.5mm" }).productType,
+    "Аудио кабел"
+  );
+  assert.equal(
+    generateProductName({ categorySlug: "audio_cables", sourceCategoryName: "Audio-Video Adapters" }).productType,
+    "Аудио/видео адаптер"
+  );
+});
+
+test("product type: ambiguous audio category falls back to the generic audio-accessory type with a warning", () => {
+  const result = generateProductName({ categorySlug: "audio_cables", sourceCategoryName: "Something New" });
+  assert.equal(result.productType, "Аудио аксесоар");
+  assert.ok(result.warnings.length > 0);
+});
+
+test("product type: car holder with wireless charging (extended car refinement)", () => {
+  const result = generateProductName({
+    categorySlug: "aksesoari-za-avtomobili",
+    sourceCategoryName: "Car Holders with Wireless Charging",
+  });
+  assert.equal(result.productType, "Стойка с безжично зареждане за кола");
+});
+
+test("product type: lanyard/link strap exact classifications", () => {
+  for (const sourceCategoryName of ["Link Straps", "Lanyard Strap", "Lanyard Crossbody"]) {
+    const result = generateProductName({ categorySlug: "popsoket-i-vrazki", sourceCategoryName });
+    assert.equal(result.productType, "Връзка за телефон");
+  }
+});
+
+test("product type: ambiguous popsoket-i-vrazki category without an exact-known lanyard source falls back safely with a warning", () => {
+  const result = generateProductName({ categorySlug: "popsoket-i-vrazki", sourceCategoryName: "Something Else" });
+  assert.equal(result.productType, "Аксесоар");
+  assert.ok(result.warnings.length > 0);
 });
 
 test("product type: headphones", () => {
@@ -363,4 +437,48 @@ test("color map exposes only exact, case-insensitive full-string matches - no pa
 test("Matte Black is recognized as its own distinct entry, not conflated with plain Black", () => {
   assert.equal(normalizeColor("Matte Black"), "матово черен");
   assert.notEqual(normalizeColor("Matte Black"), normalizeColor("Black"));
+});
+
+// --- Phase E2: conservative additions from real full-catalog frequency data ---
+
+test("Phase E2 safe color aliases normalize correctly", () => {
+  assert.equal(normalizeColor("Navy Blue"), "тъмносин");
+  assert.equal(normalizeColor("Deep Blue"), "тъмносин");
+  assert.equal(normalizeColor("Sky Blue"), "светлосин");
+  assert.equal(normalizeColor("Deep Green"), "тъмнозелен");
+  assert.equal(normalizeColor("Light Green"), "светлозелен");
+  assert.equal(normalizeColor("Mint Green"), "мента");
+  assert.equal(normalizeColor("Light Purple"), "светлолилав");
+  assert.equal(normalizeColor("Dark Purple"), "тъмнолилав");
+  assert.equal(normalizeColor("Light Pink"), "светлорозов");
+  assert.equal(normalizeColor("Burgundy"), "бордо");
+  assert.equal(normalizeColor("Bordeaux"), "бордо");
+  assert.equal(normalizeColor("Wine Red"), "бордо");
+  assert.equal(normalizeColor("Bleu"), "син");
+  assert.equal(normalizeColor("Turquoise"), "тюркоаз");
+  assert.equal(normalizeColor("Khaki"), "каки");
+});
+
+test("Phase E2 unknown branded/finish descriptors remain deliberately untranslated", () => {
+  for (const value of [
+    "Smoke Black", "Frosted Black", "Hot Pink", "Plum Red", "Matcha",
+    "Blueberry Navy", "Vibrant Blue", "Titanium", "Natural Titanium",
+    "Camo Green", "Gunmetal", "Crystal Clear",
+  ]) {
+    assert.equal(normalizeColor(value), null, `expected "${value}" to stay untranslated`);
+  }
+});
+
+test("Phase E2: \"Privacy\" is a non-color variant token and must never be translated as a color", () => {
+  assert.equal(normalizeColor("Privacy"), null);
+  const result = generateProductName({
+    categorySlug: "protektori-za-ekran",
+    publicMaker: "Lito",
+    productLine: "2.5D Classic Glass",
+    deviceModel: "iPhone 18 Pro",
+    color: "Privacy",
+  });
+  // preserved verbatim, never mistranslated into a fabricated color word
+  assert.match(result.name, /Privacy$/);
+  assert.equal(result.normalizedColor, null);
 });

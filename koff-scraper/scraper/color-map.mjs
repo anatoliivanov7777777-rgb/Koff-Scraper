@@ -31,6 +31,30 @@ export const COLOR_MAP = {
   clear: "прозрачен",
   transparent: "прозрачен",
   "matte black": "матово черен",
+
+  // Phase E2: added only after auditing real full-catalog frequency data
+  // (see analysis-output/phase-e-naming-report.json's top unknown-color
+  // list) and confirming each is either a direct language synonym or a
+  // safe compositional extension of an ALREADY-approved light/dark/deep
+  // base-color pattern above - never a guess at an ambiguous branded/
+  // marketing/finish name (e.g. "Smoke Black", "Frosted Black", "Titanium",
+  // "Hot Pink" stay deliberately untranslated; "Privacy" is not a color
+  // at all and is never added here).
+  "navy blue": "тъмносин",
+  "deep blue": "тъмносин",
+  "sky blue": "светлосин",
+  "deep green": "тъмнозелен",
+  "light green": "светлозелен",
+  "mint green": "мента",
+  "light purple": "светлолилав",
+  "dark purple": "тъмнолилав",
+  "light pink": "светлорозов",
+  burgundy: "бордо",
+  bordeaux: "бордо",
+  "wine red": "бордо",
+  bleu: "син", // literal French synonym for "blue", seen verbatim in real Koff data
+  turquoise: "тюркоаз",
+  khaki: "каки",
 };
 
 // Нормализира за сравнение: тримва, събира множество интервали в един,
