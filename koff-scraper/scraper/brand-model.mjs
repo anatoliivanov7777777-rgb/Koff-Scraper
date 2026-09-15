@@ -188,6 +188,27 @@ function looksLikeSpecOnly(group) {
   return !group.includes("/") && SPEC_TOKEN_RE.test(group.trim());
 }
 
+// Some Koff raw titles write the Samsung Galaxy Watch4 generation as
+// "Watch4" (no space) while others write "Watch 4" (with a space) for the
+// exact same real device - confirmed in the real raw catalog: 131 "Watch 4"
+// instances vs 18 "Watch4" instances, both feeding real, active products.
+// The two spellings previously became two separate model catalog
+// documents for the same device. Deliberately scoped to ONLY the digit
+// "4" (the one generation actually proven to produce duplicate catalog
+// entries) within the Samsung Watch family specifically - other
+// generations (3, 5, 6, 7, 8) are NOT touched here, because their own raw
+// data majority is inconsistent (generations 7 and 8 are themselves
+// MAJORITY no-space in the real raw catalog), so a blanket "always add a
+// space" rule across the whole family would not be a deterministic,
+// evidence-backed fix for them - it would just trade one inconsistency
+// for another. \b keeps this from touching an unrelated number that
+// happens to start with 4 (e.g. it will not touch "Watch40mm" if that
+// ever existed as one glued token, since \b requires a non-word
+// character - or the end of the fragment - immediately after the "4").
+function canonicalizeSamsungWatchModel(model) {
+  return model.replace(/\bWatch4\b/gi, "Watch 4");
+}
+
 function processSlashGroup(text) {
   const parts = text
     .split("/")
@@ -221,13 +242,15 @@ function processSlashGroup(text) {
       currentBrand = rawBrand;
       const root = extractRoot(rawModel);
       if (root) currentRoot = root;
-      currentFullModel = normalizeSuffixes(rawModel);
       currentIsWatch = isWatchDevice(part, rawBrand);
 
       const finalBrand = currentIsWatch ? remapWatchBrand(currentBrand) : currentBrand;
+      let modelForThisPart = normalizeSuffixes(rawModel);
+      if (finalBrand === "Samsung Watch") modelForThisPart = canonicalizeSamsungWatchModel(modelForThisPart);
+      currentFullModel = modelForThisPart;
       results.push({
         brand: finalBrand,
-        model: normalizeSuffixes(rawModel),
+        model: modelForThisPart,
         isWatch: currentIsWatch,
       });
       continue;
@@ -247,12 +270,34 @@ function processSlashGroup(text) {
       : /^(Pro|Plus|Max|Mini|Ultra|Pro Max|FE|Lite|Air|\d+G)$/i;
 
     let modelText = rawModel;
-    if (currentRoot && /^\d/.test(part)) {
+    const rootTokens = currentRoot.split(/\s+/).filter(Boolean);
+    const rootTail = rootTokens.at(-1);
+    if (
+      currentIsWatch
+      && /^Watch\s+Fit$/i.test(currentRoot)
+      && rootTail
+      && new RegExp(`^${rootTail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+\\d`, "i").test(part)
+    ) {
+      // Koff съкращава общия часовников префикс след първия модел:
+      // "Huawei Watch Fit 5 Pro / Fit 5". Възстановяваме само липсващата
+      // част от доказания "Watch Fit" token root, без да измисляме модел.
+      modelText = `${rootTokens.slice(0, -1).join(" ")} ${part}`;
+    } else if (currentRoot && /^\d/.test(part)) {
       modelText = `${currentRoot} ${part}`;
     } else if (!currentIsWatch && currentRoot && /^SE(\s+\d+)?$/i.test(part.trim())) {
       // "SE" / "SE 2" при ТЕЛЕФОНИ означава "iPhone SE 2" (при часовници
       // "SE" е самостоятелен модел и не се пипа).
       modelText = `${currentRoot} ${part}`;
+    } else if (!currentIsWatch && currentBrand === "Apple" && currentRoot === "iPhone" && /^Phone\s+\d/i.test(part)) {
+      // Koff понякога изброява съвместими iPhone устройства като
+      // "iPhone 18 Pro / Phone 17 Pro / Phone 17 / Phone 16 Pro" -
+      // фрагментите след първия махат водещото "i" на "iPhone" като своя
+      // (грешна) стенография. Строго ограничено: fira само когато коренът
+      // на ТОЗИ slash-list вече е доказано "iPhone" (никога за несвързан
+      // текст, съдържащ "Phone" другаде - друга продуктова линия, spec
+      // токен и т.н.) и само за точната форма "Phone <цифра...>", която
+      // реалният дефект приема.
+      modelText = part.replace(/^Phone\b/i, "iPhone");
     } else if (currentFullModel && SUFFIX_ONLY_RE.test(part.trim())) {
       const suffix = part.trim();
       // Специален случай: "iPhone 14 Pro/Max" при koff.ro значи
@@ -271,9 +316,16 @@ function processSlashGroup(text) {
         modelText = `${base} ${suffix}`;
       }
     }
-    const finalModel = normalizeSuffixes(modelText);
-    currentFullModel = finalModel;
     const finalBrand = currentIsWatch ? remapWatchBrand(currentBrand) : currentBrand;
+    let finalModel = normalizeSuffixes(modelText);
+    if (finalBrand === "Samsung Watch") finalModel = canonicalizeSamsungWatchModel(finalModel);
+    currentFullModel = finalModel;
+    if (currentIsWatch && /^Ultra$/i.test(finalModel)) {
+      // При "Apple Watch ... / Ultra / 2 / 3 / 4" bare numeric частите
+      // продължават непосредствения watch token "Ultra", не стария "Watch".
+      // Обновяването е тясно ограничено до доказаната Ultra структура.
+      currentRoot = finalModel;
+    }
     results.push({
       brand: finalBrand,
       model: finalModel,

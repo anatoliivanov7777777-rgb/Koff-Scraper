@@ -40,3 +40,53 @@ test("sourceProductId is omitted (not set to a falsy/invalid value) when raw.id 
   assert.equal(mapped.sourceId, "KF1");
   assert.equal("sourceProductId" in mapped, false);
 });
+
+test("supplier max and isEol availability fields are preserved losslessly without filtering", () => {
+  const sellable = mapToConvexProduct({
+    id: 371914,
+    sku: "KF2365668",
+    name: "Available product",
+    salePrice: 3.9,
+    max: 27,
+    isEol: false,
+  }, "Camera Glass");
+  assert.equal(sellable.max, 27);
+  assert.equal(sellable.isEol, false);
+  assert.equal(sellable.stock, 27);
+
+  const eol = mapToConvexProduct({
+    id: 371915,
+    sku: "KF2365669",
+    name: "EOL product",
+    salePrice: 3.9,
+    max: 0,
+    isEol: true,
+  }, "Camera Glass");
+  assert.equal(eol.max, 0);
+  assert.equal(eol.isEol, true);
+  assert.equal(eol.stock, 0);
+
+  const temporarilyOutOfStock = mapToConvexProduct({
+    id: 371917,
+    sku: "KF2365671",
+    name: "Temporarily unavailable product",
+    salePrice: 3.9,
+    max: 0,
+    isEol: false,
+  }, "Camera Glass");
+  assert.equal(temporarilyOutOfStock.max, 0);
+  assert.equal(temporarilyOutOfStock.isEol, false);
+  assert.equal(temporarilyOutOfStock.stock, 0);
+});
+
+test("missing supplier availability fields remain missing instead of being guessed", () => {
+  const mapped = mapToConvexProduct({
+    id: 371916,
+    sku: "KF2365670",
+    name: "Unknown availability",
+    salePrice: 3.9,
+  }, "Camera Glass");
+  assert.equal("max" in mapped, false);
+  assert.equal("isEol" in mapped, false);
+  assert.equal("stock" in mapped, false);
+});

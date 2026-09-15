@@ -18,6 +18,8 @@ import { parseProductName } from "./parse-names.mjs";
 import { extractBrandModelsFromFullSegment, isInvalidModel } from "./brand-model.mjs";
 import { calcB2BPrice, calcB2CPrice } from "./pricing.mjs";
 import { buildKoffImages } from "./image-urls.mjs";
+import { resolvePublicMaker } from "./public-maker.mjs";
+import { generateProductName } from "./naming-engine.mjs";
 import { pathToFileURL } from "node:url";
 
 const OWNED_CASEKING_CONVEX_URL = "https://elated-butterfly-122.eu-west-1.convex.cloud";
@@ -175,7 +177,11 @@ const EXTRA_CATEGORY_MAP = {
 const HYDROGEL_RE = /hydrogel|хидрогел/i;
 const HYDROGEL_SLUG = "hydrogel_film";
 
-function resolveCategorySlug(rawProduct) {
+// Exported (export-only change, no logic modified) so the Phase E
+// read-only analysis tool can reuse the exact real category-resolution
+// behavior instead of duplicating it - see
+// test/sync-caseking-exports.test.mjs for a behavior-unchanged check.
+export function resolveCategorySlug(rawProduct) {
   const koffCat = norm(rawProduct.category);
   const slug = CATEGORY_MAP[koffCat] || EXTRA_CATEGORY_MAP[koffCat];
   if (!slug) return null;
@@ -185,25 +191,92 @@ function resolveCategorySlug(rawProduct) {
   return slug;
 }
 
-// Сглобява "марка + модел" за добавката в името, без да повтаря дума.
-// При часовниците марката е напр. "Samsung Watch", а моделът "Watch
-// Ultra 2" - наивното слепване даваше "Samsung Watch Watch Ultra 2".
-function deviceLabel(brand, model) {
-  const brandWords = brand.trim().split(/\s+/);
+// Сглобява storefront DISPLAY етикета "марка + модел" за компатибилното
+// устройство. Изцяло presentation-layer: НЕ променя стойностите, които
+// се пазят (bm.brand/bm.model, използвани от sourceKey) - само низа,
+// подаван на naming-engine.mjs като deviceModel. Правила (Phase E2, въз
+// основа на реални данни от пълния каталог):
+//
+// - Apple (не часовник): моделът сам по себе си е разпознаваем
+//   (iPhone/iPad/MacBook/AirPods) - марката не се добавя ("iPhone 16 Pro
+//   Max", не "Apple iPhone 16 Pro Max").
+// - Samsung (не часовник): реалният текст на модела понякога вече
+//   съдържа "Galaxy" (Z Fold/Flip), понякога не ("S25 Ultra") - винаги
+//   показва "Samsung Galaxy ..." точно веднъж, никога дублирано.
+// - MOTO: съхраняваната марка идентичност остава "MOTO" (непроменена
+//   тук) - само display показва истинското име "Motorola Moto ...".
+// - Всяка "<X> Watch" марка (Apple Watch, Samsung Watch, Google Watch,
+//   Xiaomi Watch, Huawei Watch, Honor Watch): старата логика махаше
+//   дублирана дума САМО ако е точно в началото на модела И следвана от
+//   интервал - пропускаше "Watch9" (без интервал преди цифрата) и
+//   "Pixel Watch 5 45mm" (думата "Watch" не е в началото). Сега маха
+//   думата "Watch" от марката винаги когато моделът я споменава ГДЕ да е.
+// Exported (export-only, same pattern as resolveCategorySlug) so
+// test/sync-caseking-device-labels.test.mjs can verify each rule
+// directly without reconstructing full raw-product fixtures.
+export function deviceLabel(brand, model) {
+  const trimmedBrand = brand.trim();
+  const trimmedModel = model.trim();
+
+  if (trimmedBrand === "Apple") {
+    return trimmedModel;
+  }
+
+  if (trimmedBrand === "Samsung") {
+    const withoutLeadingGalaxy = trimmedModel.replace(/^Galaxy\s+/i, "");
+    return `Samsung Galaxy ${withoutLeadingGalaxy}`.replace(/\s+/g, " ").trim();
+  }
+
+  if (trimmedBrand === "MOTO") {
+    const withoutLeadingMoto = trimmedModel.replace(/^Moto\s+/i, "");
+    return `Motorola Moto ${withoutLeadingMoto}`.replace(/\s+/g, " ").trim();
+  }
+
+  if (/\bWatch$/i.test(trimmedBrand)) {
+    const brandRoot = trimmedBrand.replace(/\s*Watch$/i, "").trim();
+    const modelAlreadyMentionsWatch = /watch/i.test(trimmedModel);
+    const label = modelAlreadyMentionsWatch
+      ? `${brandRoot} ${trimmedModel}`
+      : `${brandRoot} Watch ${trimmedModel}`;
+    return label.replace(/\s+/g, " ").trim();
+  }
+
+  // Всички други марки - непроменено предишно поведение.
+  const brandWords = trimmedBrand.split(/\s+/);
   const lastWord = brandWords[brandWords.length - 1];
   const dupRe = new RegExp(`^${lastWord}\\s+`, "i");
-  const cleanModel = dupRe.test(model.trim())
-    ? model.trim().replace(dupRe, "")
-    : model.trim();
-  return `${brand} ${cleanModel}`.replace(/\s+/g, " ").trim();
+  const cleanModel = dupRe.test(trimmedModel)
+    ? trimmedModel.replace(dupRe, "")
+    : trimmedModel;
+  return `${trimmedBrand} ${cleanModel}`.replace(/\s+/g, " ").trim();
+}
+
+// A generated row counts as sellable only when the supplier actually
+// reported a usable positive quantity. Stock is omitted entirely from a
+// generated row when Koff returned nothing verifiable (see commonFields
+// below), so "missing" and "zero" both land here as NOT sellable - the
+// same test the CaseKing-side availability guard in products:upsertBatch
+// applies before creating a brand-new product.
+export function isSellable(row) {
+  return Number.isFinite(row?.stock) && row.stock > 0;
 }
 
 export function buildCaseKingProducts(raw, categorySlug) {
   const parsed = parseProductName(raw.name || "", raw.manufacturer);
   const color = parsed.color;
-  const baseTitle = [raw.manufacturer, parsed.productLine, color]
-    .filter(Boolean)
-    .join(" - ");
+
+  // See public-maker.mjs for the Techsuit precedence rules - manufacturer
+  // is authoritative, the raw-name leading token is only a fallback when
+  // manufacturer is missing/empty, and nothing here ever scans for
+  // "Techsuit" mid-string.
+  const makerResolution = resolvePublicMaker({ manufacturer: raw.manufacturer, rawName: raw.name });
+
+  // The public product `name` is now the naming engine's deterministic
+  // Bulgarian SEO output, never the raw supplier title - see the
+  // generateProductName() calls below. The real koff.ro category name it
+  // needs for structured type classification is raw.category itself -
+  // the same field resolveCategorySlug already reads.
+  const sourceCategoryName = raw.category;
 
   const base = raw.basePrice * VAT_MULTIPLIER;
   const priceB2B = calcB2BPrice(base);
@@ -242,17 +315,38 @@ export function buildCaseKingProducts(raw, categorySlug) {
   // Съвместимите телефони НЕ се изброяват - нито като отделни редове,
   // нито в името (клиентът избира Зарядни > Mcdodo, не Зарядни > iPhone).
   if (ACCESSORY_CATEGORY_SLUGS.has(categorySlug)) {
+    // accBrand is the ORIGINAL/unrebranded supplier accessory-brand
+    // identity (already casing-canonicalized, e.g. "mcdodo" -> "Mcdodo")
+    // - sourceKey below MUST keep using it exactly as before, never the
+    // rebranded public value, or an existing Techsuit accessory row
+    // would stop matching on the next sync and get duplicated instead
+    // of updated.
     const accBrand = normalizeAccessoryBrand(raw.manufacturer);
+    const publicAccessoryMaker = makerResolution.rebranded ? "CaseKing" : (accBrand || undefined);
+    // No device-compatibility clause for accessory rows - they aren't
+    // sold "for" a specific phone model (see the comment above this
+    // branch), so deviceModel is intentionally omitted from this call.
+    const nameResult = generateProductName({
+      categorySlug,
+      sourceCategoryName,
+      publicMaker: publicAccessoryMaker,
+      productLine: parsed.productLine,
+      color,
+    });
     return [
       {
         ...commonFields,
         category: categorySlug,
-        name: baseTitle,
-        brand: accBrand || "Всички марки",
+        name: nameResult.name,
+        brand: makerResolution.rebranded ? "CaseKing" : (accBrand || "Всички марки"),
         model: "Всички модели",
         sourceKey: `${SOURCE_TAG}:${raw.sourceId}:${categorySlug}:${accBrand || "all"}:all`,
+        ...(publicAccessoryMaker !== undefined ? { publicMaker: publicAccessoryMaker } : {}),
         // локален флаг - определя type на марката при създаването ѝ
         _isAccessory: Boolean(accBrand),
+        // local-only diagnostics for the Phase E dry-run report - never
+        // sent to Convex, stripped alongside _isWatch/_isAccessory below.
+        _namingWarnings: nameResult.warnings,
       },
     ];
   }
@@ -265,14 +359,27 @@ export function buildCaseKingProducts(raw, categorySlug) {
   }
 
   if (brandModels.length === 0) {
+    // No verified device was resolved - never fabricate a "за ..."
+    // clause or generic "universal"/"for all phones" wording (see
+    // buildDeviceClause in naming-engine.mjs: omitting deviceModel here
+    // already guarantees no such clause is added).
+    const nameResult = generateProductName({
+      categorySlug,
+      sourceCategoryName,
+      publicMaker: makerResolution.publicMaker,
+      productLine: parsed.productLine,
+      color,
+    });
     return [
       {
         ...commonFields,
         category: categorySlug,
-        name: baseTitle,
+        name: nameResult.name,
         brand: "Всички марки",
         model: "Всички модели",
         sourceKey: `${SOURCE_TAG}:${raw.sourceId}:${categorySlug}:all:all`,
+        ...(makerResolution.publicMaker !== undefined ? { publicMaker: makerResolution.publicMaker } : {}),
+        _namingWarnings: nameResult.warnings,
       },
     ];
   }
@@ -287,19 +394,43 @@ export function buildCaseKingProducts(raw, categorySlug) {
     }
   }
 
-  return unique.map((bm) => ({
-    ...commonFields,
-    category: bm.isWatch ? WATCH_CATEGORY_SLUG : categorySlug,
-    // Добавяме съвместимото устройство в самото име, за да може да се
-    // намери през търсачката на сайта (напр. търсене "iPhone 15 Pro").
-    name: `${baseTitle} (за ${deviceLabel(bm.brand, bm.model)})`,
-    brand: bm.brand,
-    model: bm.model,
-    sourceKey: `${SOURCE_TAG}:${raw.sourceId}:${bm.isWatch ? WATCH_CATEGORY_SLUG : categorySlug}:${bm.brand}:${bm.model}`,
-    // не се праща към Convex - ползва се само локално, за да знаем какъв
-    // type да зададем на марката/модела при създаването им
-    _isWatch: bm.isWatch,
-  }));
+  return unique.map((bm) => {
+    // Reuses the existing, already-verified compatibility label exactly
+    // as before (see deviceLabel above) - no new device/model parser is
+    // introduced in this phase.
+    const resolvedDeviceLabel = deviceLabel(bm.brand, bm.model);
+    // IMPORTANT: naming TYPE classification always uses the ORIGINAL
+    // categorySlug (e.g. keysove-i-kalufi), even for a row whose STORED
+    // category becomes the watch slug below - a phone/watch case must
+    // still be named "Калъф ... за <watch>", not a generic watch
+    // "Аксесоар ...". Only the stored `category`/sourceKey use the
+    // watch-remapped slug, exactly as before.
+    const nameResult = generateProductName({
+      categorySlug,
+      sourceCategoryName,
+      publicMaker: makerResolution.publicMaker,
+      productLine: parsed.productLine,
+      deviceModel: resolvedDeviceLabel,
+      color,
+    });
+    return {
+      ...commonFields,
+      category: bm.isWatch ? WATCH_CATEGORY_SLUG : categorySlug,
+      name: nameResult.name,
+      // brand/model stay the COMPATIBLE-DEVICE identity (e.g. Apple/iPhone
+      // 16 Pro Max) - unaffected by any manufacturer rebrand, exactly as
+      // before. sourceKey below is built from the same device brand/model,
+      // never from makerResolution's public value.
+      brand: bm.brand,
+      model: bm.model,
+      sourceKey: `${SOURCE_TAG}:${raw.sourceId}:${bm.isWatch ? WATCH_CATEGORY_SLUG : categorySlug}:${bm.brand}:${bm.model}`,
+      ...(makerResolution.publicMaker !== undefined ? { publicMaker: makerResolution.publicMaker } : {}),
+      // не се праща към Convex - ползва се само локално, за да знаем какъв
+      // type да зададем на марката/модела при създаването им
+      _isWatch: bm.isWatch,
+      _namingWarnings: nameResult.warnings,
+    };
+  });
 }
 
 async function runBackfillMigration(convex) {
@@ -461,6 +592,21 @@ async function main() {
   let newModels = 0;
 
   for (const p of caseKingProducts) {
+    // Only SELLABLE rows may introduce NEW brand/model metadata.
+    //
+    // A zero-stock (or unverified-stock) row is one of two things: an item
+    // CaseKing already sells, whose brand/model metadata therefore already
+    // exists from its earlier sellable state; or a brand-new supplier item
+    // that products:upsertBatch will refuse to create (the availability
+    // guard). Creating dropdown entries for the latter would advertise
+    // brands and models with no buyable product behind them.
+    //
+    // This filter is metadata-only. The product upsert further below still
+    // receives EVERY generated row, because existing products must keep
+    // receiving stock updates - including stock = 0, so a sold-out item
+    // stops showing as available.
+    if (!isSellable(p)) continue;
+
     if (p.brand !== "Всички марки") {
       const brandLower = p.brand.toLowerCase();
       if (!brandsCache.has(brandLower)) {
@@ -498,7 +644,7 @@ async function main() {
   for (let i = 0; i < caseKingProducts.length; i += CHUNK) {
     const chunk = caseKingProducts
       .slice(i, i + CHUNK)
-      .map(({ _isWatch, _isAccessory, ...rest }) => rest);
+      .map(({ _isWatch, _isAccessory, _namingWarnings, ...rest }) => rest);
     const res = await syncMutation(convex, "products:upsertBatch", { products: chunk });
     totalCreated += res.createdCount || 0;
     totalUpdated += res.updatedCount || 0;
