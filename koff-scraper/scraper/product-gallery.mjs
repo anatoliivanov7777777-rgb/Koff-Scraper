@@ -78,14 +78,48 @@ export async function fetchProductGallery(koffClient, sourceProductId) {
   return { ok: true, images: extractGalleryUrls(body) };
 }
 
+// Coalesces concurrent ensureFreshToken() calls into a single in-flight
+// refresh, so N pool workers all hitting a stale token around the same
+// time trigger exactly one refresh cycle rather than a refresh storm of
+// parallel /login/refresh calls. This reuses koffClient's own
+// ensureFreshToken()/refreshAccessToken() - no separate/new auth logic -
+// it only de-duplicates concurrent callers of the existing mechanism. If
+// the in-flight refresh rejects, the guard resets so the very next caller
+// gets a clean retry rather than being stuck on a permanently-broken state.
+function coalescedTokenRefresher(koffClient) {
+  let inFlight = null;
+  return function ensureFreshTokenCoalesced() {
+    if (!inFlight) {
+      inFlight = Promise.resolve(koffClient.ensureFreshToken()).finally(() => {
+        inFlight = null;
+      });
+    }
+    return inFlight;
+  };
+}
+
 // Bounded-concurrency pool: fetches every requested product's gallery with
 // at most `concurrency` requests in flight at once (never
 // Promise.all(products.map(...)) over the full catalog), so a full sync
 // with ~20k+ products stays operationally reasonable and never overwhelms
-// koff.ro. Each product's fetch is isolated - one failure only affects
-// that product's own map entry (an empty array, i.e. "no gallery found
-// this run", which downstream code already treats as safe/preserve-only)
-// and never stops the pool from processing the remaining products.
+// koff.ro. Each product's fetch is isolated - one failure (including a
+// token refresh failure) only affects that product's own map entry and
+// never stops the pool from processing the remaining products.
+//
+// Each result is an explicit { ok, images } pair, never inferred from
+// images.length alone: `ok: true` means the detail request succeeded and
+// `images` is the supplier's authoritative gallery for this run (which may
+// legitimately be a single image, or even empty if Koff genuinely reports
+// none); `ok: false` means the fetch failed/errored and the caller must
+// treat this product as "no gallery data this run" - NOT as an
+// authoritative empty gallery. See scrape.mjs for how this distinction is
+// used to avoid ever collapsing an existing multi-image CaseKing gallery
+// down to just the cover on a transient failure.
+//
+// Calls the existing (coalesced) ensureFreshToken() before every request,
+// same mechanism scrape.mjs's category crawl already uses - a full gallery
+// pass can run far longer than the 8-minute token lifetime, and pool
+// workers must not each independently discover a stale token.
 //
 // `sourceProductIds` should already be deduplicated by the caller (e.g. via
 // the existing productsById Map in scrape.mjs) so a product listed under
@@ -95,23 +129,27 @@ export async function fetchGalleriesBounded(koffClient, sourceProductIds, { conc
   const galleries = new Map();
   const counters = { attempted: ids.length, succeeded: 0, failed: 0, totalImagesFound: 0 };
   let cursor = 0;
+  const ensureFreshTokenCoalesced = coalescedTokenRefresher(koffClient);
 
   async function runner() {
     while (cursor < ids.length) {
       const id = ids[cursor++];
       let result;
       try {
+        await ensureFreshTokenCoalesced();
         result = await fetchProductGallery(koffClient, id);
       } catch {
-        // Defensive: fetchProductGallery already catches internally, but a
-        // runner must never die mid-pool regardless of what throws here.
+        // A token-refresh failure (or anything else unexpected here) marks
+        // only this one product as failed - fetchProductGallery already
+        // catches its own errors, but a runner must never die mid-pool
+        // regardless of what throws.
         result = { ok: false, images: [] };
       }
-      galleries.set(id, result.images);
-      if (result.ok && result.images.length > 0) {
+      galleries.set(id, { ok: result.ok, images: result.images });
+      if (result.ok) {
         counters.succeeded++;
         counters.totalImagesFound += result.images.length;
-      } else if (!result.ok) {
+      } else {
         counters.failed++;
       }
     }

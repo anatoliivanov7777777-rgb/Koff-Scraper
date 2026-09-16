@@ -66,8 +66,8 @@ test("extractGalleryUrls drops non-string/empty url values but keeps the valid o
 
 // --- fetchProductGallery: fake koffClient, no real network ---
 
-function fakeClient(handler) {
-  return { request: async (path) => handler(path) };
+function fakeClient(handler, { ensureFreshToken = async () => {} } = {}) {
+  return { request: async (path) => handler(path), ensureFreshToken };
 }
 function jsonResponse(status, body) {
   return { ok: status >= 200 && status < 300, status, json: async () => body };
@@ -136,23 +136,30 @@ test("fetchGalleriesBounded fetches every id, deduplicated, and keeps cover-imag
     return jsonResponse(200, { images: responses[id] ?? [] });
   });
   const { galleries, counters } = await fetchGalleriesBounded(client, [1, 2, 1, 2], { concurrency: 2 });
-  assert.deepEqual(galleries.get(1), ["https://cdn.koff.ro/1a.jpg", "https://cdn.koff.ro/1b.jpg"]);
-  assert.deepEqual(galleries.get(2), ["https://cdn.koff.ro/2a.jpg"]);
+  assert.deepEqual(galleries.get(1), { ok: true, images: ["https://cdn.koff.ro/1a.jpg", "https://cdn.koff.ro/1b.jpg"] });
+  assert.deepEqual(galleries.get(2), { ok: true, images: ["https://cdn.koff.ro/2a.jpg"] });
   assert.equal(galleries.size, 2);
   assert.deepEqual(counters, { attempted: 2, succeeded: 2, failed: 0, totalImagesFound: 3 });
 });
 
-test("fetchGalleriesBounded isolates one product's failure from the rest", async () => {
+test("fetchGalleriesBounded isolates one product's failure from the rest, with an explicit ok:false (not just an empty array)", async () => {
   const client = fakeClient((path) => {
     const id = Number(path.match(/\/api\/product\/(\d+)/)[1]);
     if (id === 2) throw new Error("boom");
     return jsonResponse(200, { images: [{ url: `https://cdn.koff.ro/${id}.jpg` }] });
   });
   const { galleries, counters } = await fetchGalleriesBounded(client, [1, 2, 3], { concurrency: 2 });
-  assert.deepEqual(galleries.get(1), ["https://cdn.koff.ro/1.jpg"]);
-  assert.deepEqual(galleries.get(2), []);
-  assert.deepEqual(galleries.get(3), ["https://cdn.koff.ro/3.jpg"]);
+  assert.deepEqual(galleries.get(1), { ok: true, images: ["https://cdn.koff.ro/1.jpg"] });
+  assert.deepEqual(galleries.get(2), { ok: false, images: [] });
+  assert.deepEqual(galleries.get(3), { ok: true, images: ["https://cdn.koff.ro/3.jpg"] });
   assert.deepEqual(counters, { attempted: 3, succeeded: 2, failed: 1, totalImagesFound: 2 });
+});
+
+test("fetchGalleriesBounded marks a genuinely successful but empty gallery as ok:true, distinct from a failure", async () => {
+  const client = fakeClient(() => jsonResponse(200, { images: [] }));
+  const { galleries, counters } = await fetchGalleriesBounded(client, [1], { concurrency: 1 });
+  assert.deepEqual(galleries.get(1), { ok: true, images: [] });
+  assert.deepEqual(counters, { attempted: 1, succeeded: 1, failed: 0, totalImagesFound: 0 });
 });
 
 test("fetchGalleriesBounded never exceeds the configured concurrency", async () => {

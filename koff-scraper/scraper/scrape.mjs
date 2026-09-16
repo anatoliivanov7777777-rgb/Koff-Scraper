@@ -220,9 +220,16 @@ async function main() {
   // Additive, opt-in gallery enrichment: ONE bounded-concurrency pass over
   // the already-deduplicated product set (never per-category, never
   // unbounded Promise.all over the whole catalog - see product-gallery.mjs).
-  // A product whose gallery fetch fails or returns nothing recognizable
-  // simply keeps today's single-cover-image behavior; it is never left
-  // without its existing image/images.
+  //
+  // CRITICAL: `product.images` is set ONLY when the detail fetch actually
+  // SUCCEEDED (result.ok === true), never merely because a gallery is
+  // empty/missing. A failed/errored detail request leaves `images`
+  // completely unset on this product, even though `imageUrl` (the cover,
+  // from the catalog list response) is always already present - so
+  // sync-caseking.mjs can tell "Koff explicitly confirmed this gallery"
+  // apart from "gallery fetch failed this run" and never sends CaseKing an
+  // `images:[cover]` overwrite that would erase an existing multi-image
+  // gallery just because this one run's detail request errored out.
   if (ENABLE_GALLERY_FETCH) {
     const idsToFetch = payload
       .map((product) => product.sourceProductId)
@@ -235,12 +242,12 @@ async function main() {
       concurrency: GALLERY_FETCH_CONCURRENCY,
     });
     console.log(
-      `Галерии: опитани ${counters.attempted}, с намерени снимки ${counters.succeeded}, ` +
-        `неуспешни ${counters.failed}, общо допълнителни снимки ${counters.totalImagesFound}`
+      `Галерии: опитани ${counters.attempted}, успешни ${counters.succeeded}, ` +
+        `неуспешни ${counters.failed}, общо намерени снимки ${counters.totalImagesFound}`
     );
     for (const product of payload) {
-      const images = galleries.get(product.sourceProductId);
-      if (Array.isArray(images) && images.length > 0) product.images = images;
+      const result = galleries.get(product.sourceProductId);
+      if (result?.ok) product.images = result.images;
     }
   }
 

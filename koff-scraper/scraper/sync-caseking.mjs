@@ -286,13 +286,24 @@ export function buildCaseKingProducts(raw, categorySlug) {
   // фабрикува промоционален текст, когато Koff не е върнал описание.
   const description = (raw.description && raw.description.trim()) || "";
 
-  // Ако Koff не върне валидна снимка в този run (временна грешка/празен
-  // отговор), НЕ пращаме image/images изобщо - upsertBatch пази старата
+  // Ако Koff не върне валидна снимка (cover) в този run (временна грешка/
+  // празен отговор), НЕ пращаме image изобщо - upsertBatch пази старата
   // стойност на продукта непроменена вместо да я трие с празна/placeholder.
   const koffImages = buildKoffImages(raw);
+  // `images` (пълната галерия) се праща КЪМ CaseKing само когато Koff
+  // ДЕЙСТВИТЕЛНО е потвърдил успешно тази галерия в този run - т.е.
+  // scrape.mjs изрично е задал raw.images (виж коментара там), а не просто
+  // защото имаме валиден cover. Ако извличането на галерията се провали
+  // този run, raw.images липсва и тук НЕ пращаме `images` изобщо - иначе
+  // щяхме да презапишем вече съществуваща многоснимкова галерия само с
+  // корицата заради временна грешка при извличането ѝ. Успешна галерия с
+  // точно едно изображение (дори самата корица) си остава меродавна и
+  // легитимно обновява съществуващата галерия.
+  const gallerySucceeded = Array.isArray(raw.images);
   const commonFields = {
     id: null,
-    ...(koffImages.length > 0 ? { image: koffImages[0], images: koffImages } : {}),
+    ...(koffImages.length > 0 ? { image: koffImages[0] } : {}),
+    ...(gallerySucceeded && koffImages.length > 0 ? { images: koffImages } : {}),
     rating: 5,
     tag: null,
     description,
