@@ -2,33 +2,47 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { extractGalleryUrls, fetchProductGallery, fetchGalleriesBounded } from "../product-gallery.mjs";
 
+// Fixture matching the VERIFIED real shape (decompiled from koff.ro's own
+// live product-detail frontend chunk, see product-gallery.mjs's header
+// comment): `images` is an array of objects, each exposing a `.url` string,
+// rendered directly as <img src={item.url}>.
+const REAL_SHAPE_RESPONSE = {
+  id: 388174,
+  name: "Techsuit - HaloFrost II MagSafe - iPhone 18 Pro / iPhone 17 Pro - Dark Cherry",
+  coverUrl: "https://cdn.koff.ro/img/3/2/8/1/0/8/9/3281089.jpg",
+  images: [
+    { url: "https://cdn.koff.ro/img/3/2/8/1/0/8/9/3281089.jpg" },
+    { url: "https://cdn.koff.ro/img/3/2/8/1/0/9/0/3281090.jpg" },
+    { url: "https://cdn.koff.ro/img/3/2/8/1/0/9/1/3281091.jpg" },
+  ],
+};
+
 // --- extractGalleryUrls: pure, no network ---
 
-test("extractGalleryUrls reads a plain string array from the first recognized field", () => {
-  assert.deepEqual(
-    extractGalleryUrls({ images: ["https://cdn.koff.ro/a.jpg", "https://cdn.koff.ro/b.jpg"] }),
-    ["https://cdn.koff.ro/a.jpg", "https://cdn.koff.ro/b.jpg"]
-  );
-});
-
-test("extractGalleryUrls tries gallery/pictures/photos/media if images is absent", () => {
-  assert.deepEqual(extractGalleryUrls({ gallery: ["https://cdn.koff.ro/g.jpg"] }), ["https://cdn.koff.ro/g.jpg"]);
-  assert.deepEqual(extractGalleryUrls({ pictures: ["https://cdn.koff.ro/p.jpg"] }), ["https://cdn.koff.ro/p.jpg"]);
-  assert.deepEqual(extractGalleryUrls({ photos: ["https://cdn.koff.ro/ph.jpg"] }), ["https://cdn.koff.ro/ph.jpg"]);
-  assert.deepEqual(extractGalleryUrls({ media: ["https://cdn.koff.ro/m.jpg"] }), ["https://cdn.koff.ro/m.jpg"]);
-});
-
-test("extractGalleryUrls extracts a URL from an object item via known sub-fields", () => {
-  assert.deepEqual(extractGalleryUrls({ images: [{ url: "https://cdn.koff.ro/o1.jpg" }] }), ["https://cdn.koff.ro/o1.jpg"]);
-  assert.deepEqual(extractGalleryUrls({ images: [{ src: "https://cdn.koff.ro/o2.jpg" }] }), ["https://cdn.koff.ro/o2.jpg"]);
-  assert.deepEqual(extractGalleryUrls({ images: [{ path: "https://cdn.koff.ro/o3.jpg" }] }), ["https://cdn.koff.ro/o3.jpg"]);
+test("extractGalleryUrls reads .url from each object in the verified images array", () => {
+  assert.deepEqual(extractGalleryUrls(REAL_SHAPE_RESPONSE), [
+    "https://cdn.koff.ro/img/3/2/8/1/0/8/9/3281089.jpg",
+    "https://cdn.koff.ro/img/3/2/8/1/0/9/0/3281090.jpg",
+    "https://cdn.koff.ro/img/3/2/8/1/0/9/1/3281091.jpg",
+  ]);
 });
 
 test("extractGalleryUrls preserves supplier order and does not deduplicate itself (buildKoffImages does that)", () => {
   assert.deepEqual(
-    extractGalleryUrls({ images: ["https://cdn.koff.ro/b.jpg", "https://cdn.koff.ro/a.jpg", "https://cdn.koff.ro/b.jpg"] }),
+    extractGalleryUrls({ images: [{ url: "https://cdn.koff.ro/b.jpg" }, { url: "https://cdn.koff.ro/a.jpg" }, { url: "https://cdn.koff.ro/b.jpg" }] }),
     ["https://cdn.koff.ro/b.jpg", "https://cdn.koff.ro/a.jpg", "https://cdn.koff.ro/b.jpg"]
   );
+});
+
+test("extractGalleryUrls no longer recognizes other field names or shapes (speculative guessing removed)", () => {
+  // Other candidate field names considered before the real shape was
+  // verified - none of these are the real API, so none are parsed anymore.
+  assert.deepEqual(extractGalleryUrls({ gallery: [{ url: "https://cdn.koff.ro/g.jpg" }] }), []);
+  assert.deepEqual(extractGalleryUrls({ media: { images: [{ url: "https://cdn.koff.ro/m.jpg" }] } }), []);
+  // Item shapes other than {url} are no longer recognized either.
+  assert.deepEqual(extractGalleryUrls({ images: [{ src: "https://cdn.koff.ro/o2.jpg" }] }), []);
+  assert.deepEqual(extractGalleryUrls({ images: [{ path: "https://cdn.koff.ro/o3.jpg" }] }), []);
+  assert.deepEqual(extractGalleryUrls({ images: ["https://cdn.koff.ro/plain-string.jpg"] }), []);
 });
 
 test("extractGalleryUrls never crashes and never invents a URL on a malformed/unrecognized response", () => {
@@ -39,12 +53,15 @@ test("extractGalleryUrls never crashes and never invents a URL on a malformed/un
   assert.deepEqual(extractGalleryUrls({}), []);
   assert.deepEqual(extractGalleryUrls({ images: "not-an-array" }), []);
   assert.deepEqual(extractGalleryUrls({ images: [] }), []);
-  assert.deepEqual(extractGalleryUrls({ images: [null, 42, {}, { unknownField: "x" }] }), []);
-  assert.deepEqual(extractGalleryUrls({ someOtherField: ["https://cdn.koff.ro/x.jpg"] }), []);
+  assert.deepEqual(extractGalleryUrls({ images: [null, 42, {}, { url: 5 }, { unknownField: "x" }] }), []);
+  assert.deepEqual(extractGalleryUrls({ someOtherField: [{ url: "https://cdn.koff.ro/x.jpg" }] }), []);
 });
 
-test("extractGalleryUrls falls through to the next candidate field when the first is empty", () => {
-  assert.deepEqual(extractGalleryUrls({ images: [], gallery: ["https://cdn.koff.ro/g.jpg"] }), ["https://cdn.koff.ro/g.jpg"]);
+test("extractGalleryUrls drops non-string/empty url values but keeps the valid ones in the same array", () => {
+  assert.deepEqual(
+    extractGalleryUrls({ images: [{ url: "https://cdn.koff.ro/a.jpg" }, { url: "" }, { url: null }, { url: "https://cdn.koff.ro/b.jpg" }] }),
+    ["https://cdn.koff.ro/a.jpg", "https://cdn.koff.ro/b.jpg"]
+  );
 });
 
 // --- fetchProductGallery: fake koffClient, no real network ---
@@ -56,12 +73,23 @@ function jsonResponse(status, body) {
   return { ok: status >= 200 && status < 300, status, json: async () => body };
 }
 
-test("fetchProductGallery requests the singular per-product detail route by numeric id", async () => {
+test("fetchProductGallery requests /api/product/:id with the verified expand parameter (images included)", async () => {
   let requestedPath;
-  const client = fakeClient((path) => { requestedPath = path; return jsonResponse(200, { images: ["https://cdn.koff.ro/a.jpg"] }); });
+  const client = fakeClient((path) => { requestedPath = path; return jsonResponse(200, REAL_SHAPE_RESPONSE); });
   const result = await fetchProductGallery(client, 388174);
-  assert.equal(requestedPath, "/api/product/388174");
-  assert.deepEqual(result, { ok: true, images: ["https://cdn.koff.ro/a.jpg"] });
+  assert.equal(requestedPath, "/api/product/388174?expand=cartQty%2CinCart%2Cimages%2Cdescription%2CmetaDescription%2ColdEan");
+  assert.deepEqual(result, { ok: true, images: extractGalleryUrls(REAL_SHAPE_RESPONSE) });
+});
+
+test("fetchProductGallery reproduces the confirmed probe result: /api/product/388174 WITHOUT expand has no images field", async () => {
+  // This is exactly what the earlier read-only probe observed: HTTP 200,
+  // but no images/gallery/media field at all when `expand` omits `images`.
+  const withoutExpand = {
+    id: 388174, name: "Techsuit - HaloFrost II MagSafe - iPhone 18 Pro / iPhone 17 Pro - Dark Cherry",
+    sku: "KF2368383", coverUrl: "https://cdn.koff.ro/img/3/2/8/1/0/8/9/3281089.jpg",
+    max: 1, basePrice: null, salePrice: null,
+  };
+  assert.deepEqual(extractGalleryUrls(withoutExpand), []);
 });
 
 test("fetchProductGallery degrades to ok:false/[] on a non-2xx response, without throwing", async () => {
@@ -99,14 +127,17 @@ test("fetchProductGallery rejects a non-positive-integer id without making a req
 // --- fetchGalleriesBounded: concurrency, isolation, counters ---
 
 test("fetchGalleriesBounded fetches every id, deduplicated, and keeps cover-image order semantics to the caller", async () => {
-  const responses = { 1: ["https://cdn.koff.ro/1a.jpg", "https://cdn.koff.ro/1b.jpg"], 2: ["https://cdn.koff.ro/2a.jpg"] };
+  const responses = {
+    1: [{ url: "https://cdn.koff.ro/1a.jpg" }, { url: "https://cdn.koff.ro/1b.jpg" }],
+    2: [{ url: "https://cdn.koff.ro/2a.jpg" }],
+  };
   const client = fakeClient((path) => {
     const id = Number(path.match(/\/api\/product\/(\d+)/)[1]);
     return jsonResponse(200, { images: responses[id] ?? [] });
   });
   const { galleries, counters } = await fetchGalleriesBounded(client, [1, 2, 1, 2], { concurrency: 2 });
-  assert.deepEqual(galleries.get(1), responses[1]);
-  assert.deepEqual(galleries.get(2), responses[2]);
+  assert.deepEqual(galleries.get(1), ["https://cdn.koff.ro/1a.jpg", "https://cdn.koff.ro/1b.jpg"]);
+  assert.deepEqual(galleries.get(2), ["https://cdn.koff.ro/2a.jpg"]);
   assert.equal(galleries.size, 2);
   assert.deepEqual(counters, { attempted: 2, succeeded: 2, failed: 0, totalImagesFound: 3 });
 });
@@ -115,7 +146,7 @@ test("fetchGalleriesBounded isolates one product's failure from the rest", async
   const client = fakeClient((path) => {
     const id = Number(path.match(/\/api\/product\/(\d+)/)[1]);
     if (id === 2) throw new Error("boom");
-    return jsonResponse(200, { images: [`https://cdn.koff.ro/${id}.jpg`] });
+    return jsonResponse(200, { images: [{ url: `https://cdn.koff.ro/${id}.jpg` }] });
   });
   const { galleries, counters } = await fetchGalleriesBounded(client, [1, 2, 3], { concurrency: 2 });
   assert.deepEqual(galleries.get(1), ["https://cdn.koff.ro/1.jpg"]);
@@ -139,7 +170,7 @@ test("fetchGalleriesBounded never exceeds the configured concurrency", async () 
 });
 
 test("fetchGalleriesBounded ignores non-positive-integer ids and reports an empty plan for an empty list", async () => {
-  const client = fakeClient(() => jsonResponse(200, { images: ["https://cdn.koff.ro/x.jpg"] }));
+  const client = fakeClient(() => jsonResponse(200, { images: [{ url: "https://cdn.koff.ro/x.jpg" }] }));
   const { galleries, counters } = await fetchGalleriesBounded(client, [0, -1, "a", NaN], { concurrency: 3 });
   assert.equal(galleries.size, 0);
   assert.deepEqual(counters, { attempted: 0, succeeded: 0, failed: 0, totalImagesFound: 0 });

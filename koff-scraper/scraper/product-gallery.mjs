@@ -5,51 +5,43 @@
 // by scrape.mjs) only ever exposes a single `coverUrl` per product -
 // confirmed empirically (2026-09-16, read-only, unauthenticated request
 // against a live category): the product object carries no images/gallery/
-// media field at all. koff.ro DOES expose a singular per-product detail
-// route, /api/product/:id (the same numeric id already extracted as
-// sourceProductId in product-mapping.mjs) - confirmed to exist because it
-// answers "Unauthorized" (a real application error) rather than "Not
-// Found" when called without a session, exactly like every other
-// authenticated koff.ro endpoint this scraper already calls via
-// koff-client.mjs. Its authenticated JSON response shape - specifically
-// which field carries the gallery array - has NOT been observed in this
-// environment (no KOFF_EMAIL/KOFF_PASSWORD available here to log in), so
-// extractGalleryUrls is deliberately defensive: it recognizes several
-// plausible field names/shapes and returns an empty array (never a guess,
-// never a fabricated URL) for anything it does not recognize. Because
-// buildKoffImages/buildCaseKingProducts already treat "no gallery this
-// run" identically to today's single-image behavior (see image-urls.mjs),
-// an unrecognized response shape degrades safely to current production
-// behavior rather than corrupting or losing any image.
+// media field at all.
 //
-// Before enabling ENABLE_GALLERY_FETCH in a real run, confirm the actual
-// field name against one real authenticated /api/product/:id response and,
-// if needed, add it to CANDIDATE_ARRAY_FIELDS below.
+// The gallery source is VERIFIED, not guessed: decompiled from koff.ro's own
+// live frontend bundle (2026-09-16, static inspection, no login required -
+// https://shop.koff.ro/app/0.9.78/js/DCZ9xb2m.js resolves the router's
+// `p/:id`/`product/:id` route to a lazily-loaded chunk,
+// https://shop.koff.ro/app/0.9.78/js/TBDfO2Pk.js, which on mount performs:
+//   await Dt.get(`/api/product/${id}`, { params: { expand:
+//     "cartQty,inCart,images,description,metaDescription,oldEan" } })
+// and renders the gallery/thumbnail sliders as `Ft(s.value.images, (H, U) =>
+// ... <img src={H.url} ...>)` - i.e. the response has an `images` array
+// whose items are objects exposing (at least) a `.url` string, and the
+// SAME /api/product/:id route this module already called is correct - the
+// only thing missing was the `expand=...,images,...` query parameter (the
+// probe run against /api/product/388174 without it, confirming the field is
+// genuinely absent unless requested - matching the catalog list endpoint's
+// own existing `expand=cartQty,inCart` pattern already used in scrape.mjs).
+//
+// PRODUCT_DETAIL_EXPAND intentionally matches the frontend's own expand list
+// verbatim rather than trimming it to only "images", to stay on the exact
+// verified, working request rather than an untested variant.
+const PRODUCT_DETAIL_EXPAND = "cartQty,inCart,images,description,metaDescription,oldEan";
 
-const CANDIDATE_ARRAY_FIELDS = ["images", "gallery", "pictures", "photos", "media"];
-const CANDIDATE_ITEM_URL_FIELDS = ["url", "src", "path", "image", "original", "large", "href"];
-
-function coerceUrl(item) {
-  if (typeof item === "string") return item;
-  if (item && typeof item === "object") {
-    for (const field of CANDIDATE_ITEM_URL_FIELDS) {
-      if (typeof item[field] === "string") return item[field];
-    }
-  }
-  return null;
-}
-
-// Pure. Never throws - a response shape this function does not recognize
-// simply yields no gallery images (see module comment above).
+// Pure. Never throws. Parses only the verified real shape
+// (`detailResponse.images[].url`) - no speculative field-name guessing.
+// A response that does not match this exact shape (e.g. koff.ro changes its
+// API, or a transient malformed body) yields no gallery images rather than
+// throwing; see buildKoffImages/buildCaseKingProducts in image-urls.mjs/
+// sync-caseking.mjs for why that degrades safely to today's single-image
+// behavior instead of losing or corrupting an existing image.
 export function extractGalleryUrls(detailResponse) {
   if (!detailResponse || typeof detailResponse !== "object") return [];
-  for (const field of CANDIDATE_ARRAY_FIELDS) {
-    const value = detailResponse[field];
-    if (!Array.isArray(value) || value.length === 0) continue;
-    const urls = value.map(coerceUrl).filter((url) => typeof url === "string" && url.trim());
-    if (urls.length > 0) return urls;
-  }
-  return [];
+  const images = detailResponse.images;
+  if (!Array.isArray(images)) return [];
+  return images
+    .map((item) => (item && typeof item === "object" ? item.url : null))
+    .filter((url) => typeof url === "string" && url.trim());
 }
 
 // Fetches ONE product's gallery through the already-authenticated
@@ -64,7 +56,9 @@ export async function fetchProductGallery(koffClient, sourceProductId) {
   }
   let response;
   try {
-    response = await koffClient.request(`/api/product/${sourceProductId}`);
+    response = await koffClient.request(
+      `/api/product/${sourceProductId}?expand=${encodeURIComponent(PRODUCT_DETAIL_EXPAND)}`
+    );
   } catch {
     return { ok: false, images: [], reason: "transport-error" };
   }

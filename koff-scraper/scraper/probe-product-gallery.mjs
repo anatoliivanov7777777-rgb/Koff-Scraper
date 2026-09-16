@@ -5,16 +5,17 @@
 // Purpose: authenticate with the existing Koff session flow
 // (koff-client.mjs - the exact same login/cookie/CSRF/bearer-token
 // handling every other request in this repo already uses) and issue
-// EXACTLY ONE GET request to /api/product/:id, then print a heavily
-// sanitized structural summary of the response - never the raw body,
-// never any header, cookie, token or credential.
+// EXACTLY ONE GET request to /api/product/:id (with the expand=...,images,...
+// query parameter verified by static frontend inspection - see
+// product-gallery.mjs's header comment), then print a heavily sanitized
+// structural summary of the response - never the raw body, never any
+// header, cookie, token or credential.
 //
 // Usage (from koff-scraper/scraper):
 //   KOFF_EMAIL=... KOFF_PASSWORD=... node probe-product-gallery.mjs [productId]
 //
-// Delete this file once the real gallery field has been confirmed and
-// product-gallery.mjs has been updated to parse it directly - it exists
-// only to make that one confirmation possible.
+// Delete this file once a real run's image count/order has been reviewed
+// end-to-end - it exists only to make that live confirmation possible.
 
 import { createKoffClient } from "./koff-client.mjs";
 
@@ -117,7 +118,12 @@ async function main() {
   await client.login();
   await client.ensureFreshToken();
 
-  const path = `/api/product/${PRODUCT_ID}`;
+  // Verified (2026-09-16, static frontend inspection): koff.ro's own
+  // product-detail page requests exactly this expand list to receive the
+  // `images` array - without it, /api/product/:id omits images entirely
+  // (confirmed by the earlier probe run against this same endpoint).
+  const expand = "cartQty,inCart,images,description,metaDescription,oldEan";
+  const path = `/api/product/${PRODUCT_ID}?expand=${encodeURIComponent(expand)}`;
   console.log(`GET ${path}`);
   const response = await client.request(path);
   console.log(`HTTP status: ${response.status}`);

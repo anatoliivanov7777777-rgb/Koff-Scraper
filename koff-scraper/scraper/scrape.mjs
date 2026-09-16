@@ -20,12 +20,13 @@ const CONVEX_URL = process.env.CONVEX_HTTP_URL; // напр. https://xxxxx.conve
 const SCRAPER_SECRET = process.env.SCRAPER_SECRET;
 const ENABLE_KOFF_CONVEX_INGEST = process.env.ENABLE_KOFF_CONVEX_INGEST === "true";
 
-// Off by default: the /api/product/:id detail endpoint's authenticated
-// response shape has not yet been confirmed against real Koff data (see
-// product-gallery.mjs) - keep this off until a real run's counters/log
-// output has been reviewed. Even when on, an unrecognized response shape
-// degrades safely to today's single-cover-image behavior for every
-// product, never to a missing/empty image.
+// Off by default: the /api/product/:id?expand=...,images,... shape is now
+// VERIFIED (decompiled from koff.ro's own frontend, see product-gallery.mjs)
+// but a real, credentialed multi-image count for a real product has not yet
+// been reviewed end-to-end from this scraper - keep this off until that
+// review happens. Even when on, an unrecognized/failed response degrades
+// safely to today's single-cover-image behavior for every product, never
+// to a missing/empty image.
 const ENABLE_GALLERY_FETCH = process.env.ENABLE_GALLERY_FETCH === "true";
 const rawGalleryConcurrency = Number.parseInt(process.env.GALLERY_FETCH_CONCURRENCY ?? "", 10);
 const GALLERY_FETCH_CONCURRENCY = Number.isInteger(rawGalleryConcurrency) && rawGalleryConcurrency > 0
