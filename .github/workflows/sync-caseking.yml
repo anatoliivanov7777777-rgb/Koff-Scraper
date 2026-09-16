@@ -56,6 +56,8 @@ jobs:
         env:
           KOFF_EMAIL: ${{ secrets.KOFF_EMAIL }}
           KOFF_PASSWORD: ${{ secrets.KOFF_PASSWORD }}
+          ENABLE_GALLERY_FETCH: 'true'
+          GALLERY_FETCH_CONCURRENCY: '5'
         run: npm run scrape
 
       - name: Sync to CaseKing Convex

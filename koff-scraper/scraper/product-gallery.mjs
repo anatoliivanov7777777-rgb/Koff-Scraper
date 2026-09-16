@@ -26,6 +26,12 @@
 // PRODUCT_DETAIL_EXPAND intentionally matches the frontend's own expand list
 // verbatim rather than trimming it to only "images", to stay on the exact
 // verified, working request rather than an untested variant.
+//
+// Live-confirmed end-to-end (2026-09-16, authenticated, read-only, 3
+// products: 388174/388192/388186): this exact request returns a 2-item
+// `images` array for each, and the full pipeline through buildKoffImages
+// (cover first, https-only, deduplicated) produced the correct ordered
+// result for all three. ENABLE_GALLERY_FETCH is safe to turn on.
 const PRODUCT_DETAIL_EXPAND = "cartQty,inCart,images,description,metaDescription,oldEan";
 
 // Pure. Never throws. Parses only the verified real shape

@@ -1,28 +1,16 @@
 name: Scrape koff.ro (manual)
 
-# TEMPORARY, BRANCH-ONLY repurposing of this workflow (koff-multi-image-gallery
-# only - main's version of this file is unchanged and still runs the real
-# scraper). workflow_dispatch workflows are only selectable in the Actions
-# UI when they exist on the default branch, so this reuses the existing
-# visible entry to run scraper/verify-gallery-pipeline.mjs instead, while
-# this branch is checked out.
-#
-# This version does NOT run the scraper, does NOT call CaseKing/Convex, does
-# NOT touch the Koff cart, and produces no artifacts. It exercises the real
-# fetchProductGallery()/buildKoffImages() production functions against
-# exactly 3 known product ids (388174, 388192, 388186) - a handful of
-# read-only GET requests through the existing authenticated Koff session -
-# and prints sanitized results only.
-#
-# Revert this file to match main (restore the real scraper job) once the
-# gallery pipeline is no longer being verified on this branch.
+# Manual-only: sync-caseking.yml already performs its own scrape before
+# the approved weekly CaseKing sync, so a separate automatic daily
+# schedule here would be redundant. This workflow exists for on-demand
+# scrape/export runs (e.g. producing a fresh koff-products-raw.json for
+# offline analysis) - it never touches CaseKing/Convex/Koff cart.
 on:
   workflow_dispatch: {}
 
 jobs:
-  verify:
+  scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
     defaults:
       run:
         working-directory: koff-scraper/scraper
@@ -33,8 +21,24 @@ jobs:
           node-version: "20"
       - name: Install dependencies
         run: npm install
-      - name: Verify gallery pipeline against 3 known products (read-only, sanitized output only)
+      - name: Run scraper
         env:
           KOFF_EMAIL: ${{ secrets.KOFF_EMAIL }}
           KOFF_PASSWORD: ${{ secrets.KOFF_PASSWORD }}
-        run: node verify-gallery-pipeline.mjs
+          CONVEX_HTTP_URL: ${{ secrets.CONVEX_HTTP_URL }}
+          SCRAPER_SECRET: ${{ secrets.SCRAPER_SECRET }}
+        run: npm run scrape
+      - name: Качване на Excel файловете като artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: case-king-import-${{ github.run_id }}
+          path: |
+            koff-scraper/scraper/koff-import-gotovi.xlsx
+            koff-scraper/scraper/koff-import-chakashti-kategorii.xlsx
+          retention-days: 14
+      - name: Качване на суровия каталог (koff-products-raw.json) като отделен artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: koff-raw-catalog-${{ github.run_id }}
+          path: koff-scraper/scraper/koff-products-raw.json
+          retention-days: 1
