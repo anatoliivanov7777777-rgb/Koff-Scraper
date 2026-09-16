@@ -90,3 +90,43 @@ test("missing supplier availability fields remain missing instead of being guess
   assert.equal("isEol" in mapped, false);
   assert.equal("stock" in mapped, false);
 });
+
+// --- gallery integration (optional 3rd argument, additive) ---
+
+test("omitting the gallery argument is byte-identical to today's single-cover-image behavior", () => {
+  const raw = { id: 1, sku: "KF1", name: "Cover only", salePrice: 5, coverUrl: "https://cdn.koff.ro/c.jpg" };
+  const withoutArg = mapToConvexProduct(raw, "Cat");
+  const withEmptyArray = mapToConvexProduct(raw, "Cat", []);
+  assert.deepEqual(withoutArg, withEmptyArray);
+  assert.equal("images" in withoutArg, false);
+  assert.equal(withoutArg.imageUrl, "https://cdn.koff.ro/c.jpg");
+});
+
+test("a non-empty gallery is carried through as raw.images for image-urls.mjs to merge with the cover", () => {
+  const raw = { id: 1, sku: "KF1", name: "Cover + gallery", salePrice: 5, coverUrl: "https://cdn.koff.ro/c.jpg" };
+  const mapped = mapToConvexProduct(raw, "Cat", ["https://cdn.koff.ro/g1.jpg", "https://cdn.koff.ro/g2.jpg"]);
+  assert.deepEqual(mapped.images, ["https://cdn.koff.ro/g1.jpg", "https://cdn.koff.ro/g2.jpg"]);
+  assert.equal(mapped.imageUrl, "https://cdn.koff.ro/c.jpg");
+});
+
+test("a gallery that repeats the cover URL is passed through unchanged - deduplication is image-urls.mjs's job", () => {
+  const raw = { id: 1, sku: "KF1", name: "Repeats cover", salePrice: 5, coverUrl: "https://cdn.koff.ro/c.jpg" };
+  const mapped = mapToConvexProduct(raw, "Cat", ["https://cdn.koff.ro/c.jpg", "https://cdn.koff.ro/g1.jpg"]);
+  assert.deepEqual(mapped.images, ["https://cdn.koff.ro/c.jpg", "https://cdn.koff.ro/g1.jpg"]);
+});
+
+test("a malformed gallery argument (not an array, or non-string entries) never crashes mapping and yields no images field", () => {
+  const raw = { id: 1, sku: "KF1", name: "Malformed gallery", salePrice: 5, coverUrl: "https://cdn.koff.ro/c.jpg" };
+  for (const bad of [null, undefined, "not-an-array", 42, {}, [null, 42, {}], ["", "   "]]) {
+    const mapped = mapToConvexProduct(raw, "Cat", bad);
+    assert.equal("images" in mapped, false, `expected no images field for gallery=${JSON.stringify(bad)}`);
+    assert.equal(mapped.imageUrl, "https://cdn.koff.ro/c.jpg");
+  }
+});
+
+test("an empty gallery never overwrites/erases the existing cover image", () => {
+  const raw = { id: 1, sku: "KF1", name: "Empty gallery", salePrice: 5, coverUrl: "https://cdn.koff.ro/c.jpg" };
+  const mapped = mapToConvexProduct(raw, "Cat", []);
+  assert.equal(mapped.imageUrl, "https://cdn.koff.ro/c.jpg");
+  assert.equal("images" in mapped, false);
+});

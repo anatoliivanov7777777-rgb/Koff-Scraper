@@ -7,6 +7,7 @@ import { generateExports } from "./generate-exports.mjs";
 import { calcB2BPrice, calcB2CPrice } from "./pricing.mjs";
 import { mapToConvexProduct } from "./product-mapping.mjs";
 import { createKoffClient } from "./koff-client.mjs";
+import { fetchGalleriesBounded } from "./product-gallery.mjs";
 
 // Папка, в която се записват готовите .xlsx файлове за импорт в case-king.bg
 // (GitHub Actions ги качва като "artifact" след всеки run - виж workflow-а).
@@ -18,6 +19,18 @@ const KOFF_PASSWORD = process.env.KOFF_PASSWORD;
 const CONVEX_URL = process.env.CONVEX_HTTP_URL; // напр. https://xxxxx.convex.site/ingest-products
 const SCRAPER_SECRET = process.env.SCRAPER_SECRET;
 const ENABLE_KOFF_CONVEX_INGEST = process.env.ENABLE_KOFF_CONVEX_INGEST === "true";
+
+// Off by default: the /api/product/:id detail endpoint's authenticated
+// response shape has not yet been confirmed against real Koff data (see
+// product-gallery.mjs) - keep this off until a real run's counters/log
+// output has been reviewed. Even when on, an unrecognized response shape
+// degrades safely to today's single-cover-image behavior for every
+// product, never to a missing/empty image.
+const ENABLE_GALLERY_FETCH = process.env.ENABLE_GALLERY_FETCH === "true";
+const rawGalleryConcurrency = Number.parseInt(process.env.GALLERY_FETCH_CONCURRENCY ?? "", 10);
+const GALLERY_FETCH_CONCURRENCY = Number.isInteger(rawGalleryConcurrency) && rawGalleryConcurrency > 0
+  ? Math.min(rawGalleryConcurrency, 20)
+  : 5;
 
 if (!KOFF_EMAIL || !KOFF_PASSWORD) {
   console.error("Липсват задължителни env vars: KOFF_EMAIL, KOFF_PASSWORD");
@@ -200,6 +213,33 @@ async function main() {
 
   const payload = [...productsById.values()];
   console.log(`Общо уникални продукти с валидна цена: ${payload.length}`);
+
+  // Additive, opt-in gallery enrichment: ONE bounded-concurrency pass over
+  // the already-deduplicated product set (never per-category, never
+  // unbounded Promise.all over the whole catalog - see product-gallery.mjs).
+  // A product whose gallery fetch fails or returns nothing recognizable
+  // simply keeps today's single-cover-image behavior; it is never left
+  // without its existing image/images.
+  if (ENABLE_GALLERY_FETCH) {
+    const idsToFetch = payload
+      .map((product) => product.sourceProductId)
+      .filter((id) => Number.isInteger(id) && id > 0);
+    console.log(
+      `Извличам допълнителна галерия за ${idsToFetch.length} продукта ` +
+        `(concurrency ${GALLERY_FETCH_CONCURRENCY})...`
+    );
+    const { galleries, counters } = await fetchGalleriesBounded(koffClient, idsToFetch, {
+      concurrency: GALLERY_FETCH_CONCURRENCY,
+    });
+    console.log(
+      `Галерии: опитани ${counters.attempted}, с намерени снимки ${counters.succeeded}, ` +
+        `неуспешни ${counters.failed}, общо допълнителни снимки ${counters.totalImagesFound}`
+    );
+    for (const product of payload) {
+      const images = galleries.get(product.sourceProductId);
+      if (Array.isArray(images) && images.length > 0) product.images = images;
+    }
+  }
 
   console.log("Генерирам Excel файлове за импорт в case-king.bg...");
   const withPrices = payload.map(withDisplayPrices);

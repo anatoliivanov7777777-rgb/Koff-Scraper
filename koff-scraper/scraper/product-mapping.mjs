@@ -13,12 +13,21 @@ export function toSourceProductId(rawId) {
   return Number.isInteger(num) && num > 0 ? num : undefined;
 }
 
-export function mapToConvexProduct(raw, categoryName) {
+// `galleryImages` is optional and additive: extra product-detail images
+// (see product-gallery.mjs). Omitted/empty is byte-identical to today's
+// single-cover-image behavior - buildKoffImages (image-urls.mjs) already
+// puts `imageUrl` first and dedupes the combined list regardless of
+// whether a gallery image happens to repeat the cover.
+export function mapToConvexProduct(raw, categoryName, galleryImages = []) {
   const base = raw.salePrice ?? raw.basePrice;
 
   if (base === null || base === undefined) {
     return null;
   }
+
+  const images = Array.isArray(galleryImages)
+    ? galleryImages.filter((url) => typeof url === "string" && url.trim())
+    : [];
 
   // The current Koff API exposes availability as `max` + `isEol`:
   //   max > 0                 => currently sellable (also when EOL-tagged)
@@ -36,6 +45,7 @@ export function mapToConvexProduct(raw, categoryName) {
     description: raw.description || "",
     basePrice: base,
     imageUrl: raw.coverUrl || undefined,
+    ...(images.length > 0 ? { images } : {}),
     category: categoryName,
     manufacturer: raw.manufacturer?.name || undefined,
     ...(Number.isFinite(stock) && stock >= 0 ? { stock } : {}),
