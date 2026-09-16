@@ -4,22 +4,23 @@ name: Scrape koff.ro (manual)
 # only - main's version of this file is unchanged and still runs the real
 # scraper). workflow_dispatch workflows are only selectable in the Actions
 # UI when they exist on the default branch, so this reuses the existing
-# visible entry to run scraper/probe-product-gallery.mjs instead, while
+# visible entry to run scraper/verify-gallery-pipeline.mjs instead, while
 # this branch is checked out.
 #
 # This version does NOT run the scraper, does NOT call CaseKing/Convex, does
-# NOT touch the Koff cart, and produces no artifacts. It makes exactly one
-# read-only GET /api/product/:id (see probe-product-gallery.mjs) through the
-# existing authenticated Koff session and prints a sanitized structural
-# summary only.
+# NOT touch the Koff cart, and produces no artifacts. It exercises the real
+# fetchProductGallery()/buildKoffImages() production functions against
+# exactly 3 known product ids (388174, 388192, 388186) - a handful of
+# read-only GET requests through the existing authenticated Koff session -
+# and prints sanitized results only.
 #
 # Revert this file to match main (restore the real scraper job) once the
-# gallery probe is no longer needed on this branch.
+# gallery pipeline is no longer being verified on this branch.
 on:
   workflow_dispatch: {}
 
 jobs:
-  probe:
+  verify:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     defaults:
@@ -32,8 +33,8 @@ jobs:
           node-version: "20"
       - name: Install dependencies
         run: npm install
-      - name: Probe one product's gallery (single read-only GET, sanitized output only)
+      - name: Verify gallery pipeline against 3 known products (read-only, sanitized output only)
         env:
           KOFF_EMAIL: ${{ secrets.KOFF_EMAIL }}
           KOFF_PASSWORD: ${{ secrets.KOFF_PASSWORD }}
-        run: node probe-product-gallery.mjs 388174
+        run: node verify-gallery-pipeline.mjs
