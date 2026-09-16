@@ -90,6 +90,62 @@ test("fetchProductGallery reproduces the confirmed probe result: /api/product/38
     max: 1, basePrice: null, salePrice: null,
   };
   assert.deepEqual(extractGalleryUrls(withoutExpand), []);
+  const client = fakeClient(() => jsonResponse(200, withoutExpand));
+  const result = await fetchProductGallery(client, 388174);
+  assert.deepEqual(result, { ok: false, images: [], reason: "invalid-shape" });
+});
+
+// --- malformed-gallery-contract fail-safe ---
+
+test("1. HTTP 200 + images:[] is a legitimate explicit empty gallery => ok:true", async () => {
+  const client = fakeClient(() => jsonResponse(200, { images: [] }));
+  const result = await fetchProductGallery(client, 1);
+  assert.deepEqual(result, { ok: true, images: [] });
+});
+
+test("2. HTTP 200 + missing images field => ok:false, reason invalid-shape", async () => {
+  const client = fakeClient(() => jsonResponse(200, { id: 1, name: "No gallery field at all" }));
+  const result = await fetchProductGallery(client, 1);
+  assert.deepEqual(result, { ok: false, images: [], reason: "invalid-shape" });
+});
+
+test("3. HTTP 200 + images present but not an Array => ok:false, reason invalid-shape", async () => {
+  for (const malformed of [{ images: "wrong" }, { images: null }, { images: { url: "https://cdn.koff.ro/x.jpg" } }, { images: 42 }]) {
+    const client = fakeClient(() => jsonResponse(200, malformed));
+    const result = await fetchProductGallery(client, 1);
+    assert.deepEqual(result, { ok: false, images: [], reason: "invalid-shape" }, `expected invalid-shape for ${JSON.stringify(malformed)}`);
+  }
+});
+
+test("4. HTTP 200 + non-empty images array with completely unrecognized item structure => ok:false, not an authoritative empty gallery", async () => {
+  for (const malformed of [
+    { images: [{ src: "https://cdn.koff.ro/a.jpg" }, { path: "https://cdn.koff.ro/b.jpg" }] },
+    { images: ["https://cdn.koff.ro/plain-string.jpg"] },
+    { images: [{ image_id: 1 }, { image_id: 2 }] },
+    { images: [null, 42, {}] },
+  ]) {
+    const client = fakeClient(() => jsonResponse(200, malformed));
+    const result = await fetchProductGallery(client, 1);
+    assert.deepEqual(result, { ok: false, images: [], reason: "invalid-shape" }, `expected invalid-shape for ${JSON.stringify(malformed)}`);
+  }
+});
+
+test("a partially-valid non-empty images array (some real url items, some junk) still succeeds with the valid subset", async () => {
+  const client = fakeClient(() => jsonResponse(200, { images: [{ url: "https://cdn.koff.ro/good.jpg" }, { unknownField: "x" }, null] }));
+  const result = await fetchProductGallery(client, 1);
+  assert.deepEqual(result, { ok: true, images: ["https://cdn.koff.ro/good.jpg"] });
+});
+
+test("6. a verified normal multi-image response remains ok:true with all URLs, in order", async () => {
+  const client = fakeClient(() => jsonResponse(200, REAL_SHAPE_RESPONSE));
+  const result = await fetchProductGallery(client, 388174);
+  assert.deepEqual(result, { ok: true, images: extractGalleryUrls(REAL_SHAPE_RESPONSE) });
+});
+
+test("7. a verified successful single-image response (images:[{url: cover}]) remains ok:true", async () => {
+  const client = fakeClient(() => jsonResponse(200, { images: [{ url: "https://cdn.koff.ro/cover.jpg" }] }));
+  const result = await fetchProductGallery(client, 1);
+  assert.deepEqual(result, { ok: true, images: ["https://cdn.koff.ro/cover.jpg"] });
 });
 
 test("fetchProductGallery degrades to ok:false/[] on a non-2xx response, without throwing", async () => {

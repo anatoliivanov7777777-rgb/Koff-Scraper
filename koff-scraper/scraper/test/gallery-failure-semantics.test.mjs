@@ -153,3 +153,31 @@ test("no cover but a successful gallery still promotes the gallery's first image
   assert.equal(product.image, "https://cdn.koff.ro/img/g1.jpg");
   assert.deepEqual(product.images, ["https://cdn.koff.ro/img/g1.jpg", "https://cdn.koff.ro/img/g2.jpg"]);
 });
+
+test("5. a malformed detail response (missing/non-array/unrecognized-item images) cannot cause downstream images:[cover] - it must behave exactly like a failed fetch", async () => {
+  const malformedResponses = [
+    {},                                                   // missing images entirely
+    { images: "wrong" },                                  // images not an array
+    { images: null },
+    { images: [{ src: "https://cdn.koff.ro/a.jpg" }] },   // non-empty but unrecognized item shape
+  ];
+  for (const body of malformedResponses) {
+    const client = {
+      ensureFreshToken: async () => {},
+      request: async () => ({ ok: true, status: 200, json: async () => body }),
+    };
+    const { galleries } = await fetchGalleriesBounded(client, [380614], { concurrency: 1 });
+    const result = galleries.get(380614);
+    assert.deepEqual(result, { ok: false, images: [] }, `expected ok:false for malformed body ${JSON.stringify(body)}`);
+
+    // scrape.mjs only ever sets `.images` when result.ok - a malformed
+    // response must leave raw.images unset, same as any other failure.
+    const raw = baseRaw();
+    if (result.ok) raw.images = result.images;
+    assert.equal("images" in raw, false);
+
+    const [product] = buildCaseKingProducts(raw, "keysove-i-kalufi");
+    assert.equal(product.image, "https://cdn.koff.ro/img/cover.jpg");
+    assert.equal("images" in product, false, `malformed body ${JSON.stringify(body)} must not produce an images:[cover] payload`);
+  }
+});

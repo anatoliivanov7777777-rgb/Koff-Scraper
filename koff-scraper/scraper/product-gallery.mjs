@@ -32,6 +32,13 @@
 // `images` array for each, and the full pipeline through buildKoffImages
 // (cover first, https-only, deduplicated) produced the correct ordered
 // result for all three. ENABLE_GALLERY_FETCH is safe to turn on.
+//
+// fetchProductGallery below fails safe (ok:false) whenever the response
+// does not match this exact verified contract - a missing/non-array
+// `images` field, or a non-empty `images` array whose items don't yield
+// any recognized `.url` - rather than reporting a false "authoritative
+// empty gallery" that scrape.mjs would otherwise treat as confirmation to
+// wipe an existing CaseKing gallery down to just the cover.
 const PRODUCT_DETAIL_EXPAND = "cartQty,inCart,images,description,metaDescription,oldEan";
 
 // Pure. Never throws. Parses only the verified real shape
@@ -53,9 +60,12 @@ export function extractGalleryUrls(detailResponse) {
 // Fetches ONE product's gallery through the already-authenticated
 // koffClient (same session/CSRF/bearer-token handling as every other
 // request in koff-client.mjs - no separate auth mechanism). Never throws:
-// any transport error, non-2xx status or malformed JSON degrades to
+// any transport error, non-2xx status, malformed JSON, or a body that does
+// not match the verified gallery contract degrades to
 // { ok: false, images: [] } so a single product's detail failure can never
-// abort processing of the rest of the catalog.
+// abort processing of the rest of the catalog - and, critically, can never
+// be mistaken downstream for an authoritative empty gallery (see
+// isValidGalleryContract below).
 export async function fetchProductGallery(koffClient, sourceProductId) {
   if (!Number.isInteger(sourceProductId) || sourceProductId <= 0) {
     return { ok: false, images: [], reason: "invalid-id" };
@@ -75,7 +85,23 @@ export async function fetchProductGallery(koffClient, sourceProductId) {
   } catch {
     return { ok: false, images: [], reason: "invalid-json" };
   }
-  return { ok: true, images: extractGalleryUrls(body) };
+  // The verified contract is `body.images` being an Array (see the module
+  // header comment) - anything else (missing, null, a string, an object,
+  // ...) means this response does not carry gallery data at all, and must
+  // never be treated as "Koff confirmed zero images".
+  if (!body || typeof body !== "object" || !Array.isArray(body.images)) {
+    return { ok: false, images: [], reason: "invalid-shape" };
+  }
+  const images = extractGalleryUrls(body);
+  // A non-empty images array that yields zero recognized URLs means the
+  // item structure itself has drifted from the verified `{ url }` shape
+  // (see extractGalleryUrls) - never a real product with only invalid
+  // items. Fail safe rather than silently reporting an authoritative empty
+  // gallery for what is actually an unrecognized response.
+  if (body.images.length > 0 && images.length === 0) {
+    return { ok: false, images: [], reason: "invalid-shape" };
+  }
+  return { ok: true, images };
 }
 
 // Coalesces concurrent ensureFreshToken() calls into a single in-flight
