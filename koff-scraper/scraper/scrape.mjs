@@ -4,7 +4,7 @@
 
 import fs from "fs";
 import { generateExports } from "./generate-exports.mjs";
-import { calcB2BPrice, calcB2CPrice } from "./pricing.mjs";
+import { addVat, calcB2BPrice, calcB2CPrice } from "./pricing.mjs";
 import { mapToConvexProduct } from "./product-mapping.mjs";
 import { createKoffClient } from "./koff-client.mjs";
 import { fetchGalleriesBounded } from "./product-gallery.mjs";
@@ -108,10 +108,13 @@ async function scrapeCategoryProducts(categoryId) {
 // Отделна версия САМО за Excel export-а (с изчислени цени) - НЕ се праща
 // към Convex, защото Convex стриктно отхвърля обекти с неочаквани полета.
 function withDisplayPrices(product) {
+  // Koff prices are net of VAT. Keep exports identical to the real CaseKing
+  // sync: add 20% VAT first, then apply the B2B/B2C markup rules and .99 rounding.
+  const baseWithVat = addVat(product.basePrice);
   return {
     ...product,
-    priceB2B: calcB2BPrice(product.basePrice),
-    priceB2C: calcB2CPrice(product.basePrice),
+    priceB2B: calcB2BPrice(baseWithVat),
+    priceB2C: calcB2CPrice(baseWithVat),
   };
 }
 
