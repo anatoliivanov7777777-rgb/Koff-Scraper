@@ -27,6 +27,20 @@ jobs:
           KOFF_PASSWORD: ${{ secrets.KOFF_PASSWORD }}
           CONVEX_HTTP_URL: ${{ secrets.CONVEX_HTTP_URL }}
           SCRAPER_SECRET: ${{ secrets.SCRAPER_SECRET }}
+          # Capture the full product gallery.
+          #
+          # Without this flag scrape.mjs never issues the product-detail request,
+          # `raw.images` is never populated, and koff-products-raw.json carries
+          # no `images` field at all - which is why every CaseKing row still
+          # holds a single image despite the gallery code being finished and
+          # live-verified. sync-caseking.mjs only sends `images` to CaseKing when
+          # the gallery fetch actually succeeded for that run, so a scrape
+          # without this flag cannot populate a gallery by design.
+          #
+          # Concurrency is left at the scraper's own default (5) on purpose: this
+          # adds one detail request per product across the whole catalogue, and
+          # the default is the rate the gallery pool was verified at.
+          ENABLE_GALLERY_FETCH: "true"
         run: npm run scrape
       - name: Качване на Excel файловете като artifact
         uses: actions/upload-artifact@v4
