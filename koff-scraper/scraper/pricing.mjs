@@ -15,6 +15,13 @@
 // между ~2.5€ и ~15€ за B2C) си остават с чиста процентна надценка преди
 // финалното .99 закръгляне.
 
+export const VAT_RATE = 0.20;
+export const VAT_MULTIPLIER = 1 + VAT_RATE;
+
+export function addVat(basePrice) {
+  return basePrice * VAT_MULTIPLIER;
+}
+
 const B2B_PERCENT = 0.45;
 const B2B_MIN_MARKUP = 0.6;
 const B2B_MAX_MARKUP = 8;
