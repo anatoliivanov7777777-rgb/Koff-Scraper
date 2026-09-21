@@ -16,7 +16,7 @@ import fs from "fs";
 import { CATEGORY_MAP } from "./category-map.mjs";
 import { parseProductName } from "./parse-names.mjs";
 import { extractBrandModelsFromFullSegment, isInvalidModel } from "./brand-model.mjs";
-import { calcB2BPrice, calcB2CPrice } from "./pricing.mjs";
+import { addVat, calcB2BPrice, calcB2CPrice } from "./pricing.mjs";
 import { buildKoffImages } from "./image-urls.mjs";
 import { resolvePublicMaker } from "./public-maker.mjs";
 import { generateProductName } from "./naming-engine.mjs";
@@ -117,10 +117,8 @@ function normalizeAccessoryBrand(name) {
 }
 
 // koff.ro дава цените БЕЗ ДДС. Надценките се начисляват върху база с
-// включено ДДС, затова умножаваме преди да извикаме pricing.mjs -
-// границите (0.60-8 лв за B2B, 2-12 лв за B2C) остават непроменени.
-const VAT_RATE = 0.20;
-const VAT_MULTIPLIER = 1 + VAT_RATE;
+// включено ДДС. Използваме общия pricing helper, за да няма разминаване
+// между реалния CaseKing sync и Excel/export пътя.
 
 // Koff не дава структурирани material/weight/origin/delivery данни за
 // всеки продукт - празен низ означава "непознато", НЕ фабрикуван факт.
@@ -278,7 +276,7 @@ export function buildCaseKingProducts(raw, categorySlug) {
   // the same field resolveCategorySlug already reads.
   const sourceCategoryName = raw.category;
 
-  const base = raw.basePrice * VAT_MULTIPLIER;
+  const base = addVat(raw.basePrice);
   const priceB2B = calcB2BPrice(base);
   const priceB2C = calcB2CPrice(base);
 
