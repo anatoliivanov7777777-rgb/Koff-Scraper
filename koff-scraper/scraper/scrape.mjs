@@ -212,9 +212,11 @@ async function main() {
       }
     }
 
-    // Малка пауза между заявките към категориите, за да не претоварваме
-    // API-то на koff.ro и да не заприличаме на агресивен bot
-    await new Promise((r) => setTimeout(r, 300));
+    // No sleep here on purpose. The old 300ms category pause is now redundant:
+    // every outbound call goes through the client's shared 500ms start-slot
+    // pacing (koff-client.mjs), which already spaces the category crawl - and
+    // unlike a per-category sleep it also covers the gallery pool. Stacking
+    // both would just double the delay without making the crawl any politer.
   }
 
   const payload = [...productsById.values()];
@@ -241,18 +243,33 @@ async function main() {
       `Извличам допълнителна галерия за ${idsToFetch.length} продукта ` +
         `(concurrency ${GALLERY_FETCH_CONCURRENCY})...`
     );
-    const { galleries, counters } = await fetchGalleriesBounded(koffClient, idsToFetch, {
-      concurrency: GALLERY_FETCH_CONCURRENCY,
-    });
+    const { galleries, counters, abortedForAuthorization } = await fetchGalleriesBounded(
+      koffClient,
+      idsToFetch,
+      { concurrency: GALLERY_FETCH_CONCURRENCY }
+    );
     console.log(
       `Галерии: опитани ${counters.attempted}, успешни ${counters.succeeded}, ` +
         `неуспешни ${counters.failed}, общо намерени снимки ${counters.totalImagesFound}`
     );
+    if (abortedForAuthorization) {
+      console.error(
+        "Галериите са прекъснати: Koff върна 401/403. Продуктите без галерия остават без промяна."
+      );
+    }
     for (const product of payload) {
       const result = galleries.get(product.sourceProductId);
       if (result?.ok) product.images = result.images;
     }
   }
+
+  // Per-run request telemetry. Counters only - no URLs, no credentials.
+  const requestCounters = koffClient.getRequestCounters();
+  console.log(
+    `Заявки: общо ${requestCounters.requests}, повторения ${requestCounters.retries}, ` +
+      `HTTP 429 ${requestCounters.http429}, временни 5xx ${requestCounters.transient5xx}, ` +
+      `откази за достъп ${requestCounters.authFailures}`
+  );
 
   console.log("Генерирам Excel файлове за импорт в case-king.bg...");
   const withPrices = payload.map(withDisplayPrices);

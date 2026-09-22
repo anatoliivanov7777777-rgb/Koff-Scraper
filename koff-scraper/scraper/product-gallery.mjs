@@ -157,8 +157,19 @@ export async function fetchGalleriesBounded(koffClient, sourceProductIds, { conc
   let cursor = 0;
   const ensureFreshTokenCoalesced = coalescedTokenRefresher(koffClient);
 
+  // Koff answering 401/403 means the session is not authorised for the rest of
+  // this run. Traversal stops rather than continuing to ask - every worker
+  // checks the latch before taking its next product, so the pool drains
+  // instead of firing the remaining (potentially tens of thousands of)
+  // requests. Those products simply get no gallery this run, which is exactly
+  // the existing ok:false semantics: "no gallery data this run", never an
+  // authoritative empty gallery.
+  const latched = () => typeof koffClient.hasAuthorizationFailure === "function"
+    && koffClient.hasAuthorizationFailure();
+
   async function runner() {
     while (cursor < ids.length) {
+      if (latched()) return;
       const id = ids[cursor++];
       let result;
       try {
@@ -178,10 +189,14 @@ export async function fetchGalleriesBounded(koffClient, sourceProductIds, { conc
       } else {
         counters.failed++;
       }
+      if (latched()) return;
     }
   }
 
   const workerCount = Math.max(1, Math.min(concurrency, ids.length));
   await Promise.all(Array.from({ length: workerCount }, runner));
-  return { galleries, counters };
+  const authorizationFailure = typeof koffClient.getAuthorizationFailure === "function"
+    ? koffClient.getAuthorizationFailure()
+    : null;
+  return { galleries, counters, abortedForAuthorization: authorizationFailure !== null };
 }
