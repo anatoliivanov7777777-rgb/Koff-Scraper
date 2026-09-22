@@ -9,7 +9,11 @@ import { mapToConvexProduct } from "./product-mapping.mjs";
 import { createKoffClient } from "./koff-client.mjs";
 import { fetchGalleriesBounded } from "./product-gallery.mjs";
 import { GALLERY_STATUS } from "./gallery-state.mjs";
-import { createFileGalleryStateStore, runIncrementalGalleryPass } from "./gallery-state-store.mjs";
+import { runIncrementalGalleryPass } from "./gallery-state-store.mjs";
+import {
+  createConvexGalleryStateStore,
+  validateGalleryStateConfig,
+} from "./gallery-state-convex-store.mjs";
 
 // Папка, в която се записват готовите .xlsx файлове за импорт в case-king.bg
 // (GitHub Actions ги качва като "artifact" след всеки run - виж workflow-а).
@@ -40,9 +44,20 @@ const ENABLE_GALLERY_FETCH = process.env.ENABLE_GALLERY_FETCH === "true";
 // detail requests instead of one per catalog product.
 const FULL_GALLERY_REFRESH = process.env.FULL_GALLERY_REFRESH === "true";
 
-// Where incremental gallery state lives between runs. The file store needs no
-// infrastructure; a Convex-backed store can implement the same interface later.
-const GALLERY_STATE_FILE = process.env.GALLERY_STATE_FILE || `${EXPORT_OUT_DIR}/koff-gallery-state.json`;
+// Durable incremental gallery state, held in the dedicated Koff Convex
+// project and reached through its authenticated HTTP boundary.
+//
+// These are REQUIRED whenever ENABLE_GALLERY_FETCH is on, and validated below
+// before anything else happens - including before the Koff login. The file
+// store this replaced was ephemeral on a GitHub runner, so state never
+// survived between runs; the durable store is the whole point of the
+// incremental design.
+//
+// The URL must be the deployment's HTTP ACTIONS host (.convex.site). The
+// .convex.cloud host serves queries and mutations, not HTTP routes, and
+// returns 404 - the store rejects it outright rather than failing at runtime.
+const GALLERY_STATE_HTTP_URL = process.env.KOFF_GALLERY_STATE_HTTP_URL;
+const GALLERY_STATE_SECRET = process.env.KOFF_GALLERY_STATE_SECRET;
 
 const rawGalleryConcurrency = Number.parseInt(process.env.GALLERY_FETCH_CONCURRENCY ?? "", 10);
 const GALLERY_FETCH_CONCURRENCY = Number.isInteger(rawGalleryConcurrency) && rawGalleryConcurrency > 0
@@ -56,6 +71,28 @@ if (!KOFF_EMAIL || !KOFF_PASSWORD) {
 if (ENABLE_KOFF_CONVEX_INGEST && (!CONVEX_URL || !SCRAPER_SECRET)) {
   console.error("ENABLE_KOFF_CONVEX_INGEST изисква CONVEX_HTTP_URL и SCRAPER_SECRET");
   process.exit(1);
+}
+
+// FAIL CLOSED, BEFORE KOFF LOGIN.
+//
+// With gallery fetching on there is no safe degraded mode. Falling back to a
+// file store would silently lose state between runs; treating missing state as
+// "empty" would queue a detail request for all ~28k products. So an
+// unconfigured durable store stops the run here, before a single Koff request
+// is made, and says exactly which variable is missing.
+//
+// When gallery fetching is off these variables are not needed at all.
+if (ENABLE_GALLERY_FETCH) {
+  const { ok, errors } = validateGalleryStateConfig({
+    httpActionsUrl: GALLERY_STATE_HTTP_URL,
+    secret: GALLERY_STATE_SECRET,
+  });
+  if (!ok) {
+    console.error("ENABLE_GALLERY_FETCH=true изисква durable gallery state:");
+    for (const message of errors) console.error(`  - ${message}`);
+    console.error("Няма да стартирам без тях.");
+    process.exit(1);
+  }
 }
 
 const koffClient = createKoffClient({ email: KOFF_EMAIL, password: KOFF_PASSWORD });
@@ -251,15 +288,15 @@ async function main() {
   // gallery just because this one run's detail request errored out.
   if (ENABLE_GALLERY_FETCH) {
     // Only products whose gallery may actually need discovery/refresh become
-    // detail requests; everything else is served from stored state. The pass
-    // owns the load -> plan -> guard -> fetch -> save order, so the mass-request
-    // guard cannot be bypassed by accident, and an uninitialised/corrupt state
-    // file aborts with ZERO requests rather than being read as "fetch all".
-    const productIds = payload
-      .filter((product) => Number.isInteger(product.sourceProductId) && product.sourceProductId > 0)
-      .map((product) => product.sourceProductId);
-
-    const galleryStore = createFileGalleryStateStore(GALLERY_STATE_FILE);
+    // detail requests; everything else is served from DURABLE state in the
+    // dedicated Koff Convex deployment. The pass owns the
+    // load -> plan -> guard -> fetch -> save order, so the mass-request guard
+    // cannot be bypassed by accident, and uninitialised or corrupt durable
+    // state aborts with ZERO requests rather than being read as "fetch all".
+    const galleryStore = createConvexGalleryStateStore({
+      httpActionsUrl: GALLERY_STATE_HTTP_URL,
+      secret: GALLERY_STATE_SECRET,
+    });
     let abortedForAuthorization = false;
     const { plan } = await runIncrementalGalleryPass({
       store: galleryStore,

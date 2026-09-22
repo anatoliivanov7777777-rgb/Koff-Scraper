@@ -209,6 +209,9 @@ test("18b. the weekly/manual workflows were not touched by this change", () => {
   // this asserts the scraper module itself never sets a schedule or enables
   // the gallery fetch on the caller's behalf.
   const source = readFileSync(new URL("../scrape.mjs", import.meta.url), "utf8");
-  assert.doesNotMatch(source, /ENABLE_GALLERY_FETCH\s*=\s*true/);
+  // Never FORCED on in code - only ever read from the environment. (A message
+  // string may legitimately mention the flag, so match an assignment.)
+  assert.doesNotMatch(source, /ENABLE_GALLERY_FETCH\s*=\s*true\s*;/);
+  assert.match(source, /const ENABLE_GALLERY_FETCH = process\.env\.ENABLE_GALLERY_FETCH === "true";/);
   assert.doesNotMatch(source, /cron|schedule/i);
 });

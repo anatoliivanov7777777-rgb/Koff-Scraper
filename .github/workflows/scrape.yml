@@ -1,10 +1,17 @@
 name: Scrape koff.ro (manual)
 
-# Manual-only: sync-caseking.yml already performs its own scrape before
-# the approved weekly CaseKing sync, so a separate automatic daily
-# schedule here would be redundant. This workflow exists for on-demand
-# scrape/export runs (e.g. producing a fresh koff-products-raw.json for
-# offline analysis) - it never touches CaseKing/Convex/Koff cart.
+# Manual-only (workflow_dispatch, no schedule). This workflow exists for
+# on-demand scrape/export runs - e.g. producing a fresh koff-products-raw.json
+# for offline analysis or an incremental gallery pass.
+#
+# What it does and does not touch:
+#   - contacts koff.ro READ-ONLY, for the catalog scrape and, only for the
+#     candidates the incremental planner selects, product-detail gallery GETs
+#   - uses the DEDICATED Koff gallery-state Convex persistence
+#     (project koff-scraper-state), through its authenticated HTTP boundary
+#   - does NOT touch CaseKing Convex
+#   - does NOT touch the Koff cart
+#   - does NOT run the CaseKing sync
 on:
   workflow_dispatch: {}
 
@@ -27,20 +34,40 @@ jobs:
           KOFF_PASSWORD: ${{ secrets.KOFF_PASSWORD }}
           CONVEX_HTTP_URL: ${{ secrets.CONVEX_HTTP_URL }}
           SCRAPER_SECRET: ${{ secrets.SCRAPER_SECRET }}
-          # Capture the full product gallery.
+          # Enable the gallery pass.
           #
-          # Without this flag scrape.mjs never issues the product-detail request,
+          # Without this flag scrape.mjs never issues a product-detail request,
           # `raw.images` is never populated, and koff-products-raw.json carries
-          # no `images` field at all - which is why every CaseKing row still
-          # holds a single image despite the gallery code being finished and
-          # live-verified. sync-caseking.mjs only sends `images` to CaseKing when
-          # the gallery fetch actually succeeded for that run, so a scrape
-          # without this flag cannot populate a gallery by design.
+          # no `images` field at all. sync-caseking.mjs only sends `images` to
+          # CaseKing when the gallery fetch actually succeeded for that run, so
+          # a scrape without this flag cannot populate a gallery by design.
           #
-          # Concurrency is left at the scraper's own default (5) on purpose: this
-          # adds one detail request per product across the whole catalogue, and
-          # the default is the rate the gallery pool was verified at.
+          # The pass is INCREMENTAL: it loads durable gallery state, plans
+          # candidates, and issues a detail request only for products whose
+          # state says something actually changed. An unchanged catalogue costs
+          # ZERO detail requests - it is no longer one request per product. It
+          # also aborts outright (making no detail requests at all) if more than
+          # 500 products, or more than 2% of the catalogue, look like
+          # candidates, so corrupt or missing state can never turn a run into a
+          # full-catalogue refresh.
+          #
+          # Concurrency is left at the scraper's own default (5), the rate the
+          # gallery pool was verified at. FULL_GALLERY_REFRESH is deliberately
+          # NOT set: a full refresh is an explicit operator decision and is off
+          # by default.
           ENABLE_GALLERY_FETCH: "true"
+
+          # Durable gallery state, in the dedicated Koff Convex project.
+          #
+          # REQUIRED whenever ENABLE_GALLERY_FETCH is true - scrape.mjs fails
+          # before logging in to Koff if either is missing, rather than falling
+          # back to a state file that would not survive the runner.
+          #
+          # The URL is the deployment's HTTP ACTIONS host (.convex.site). The
+          # .convex.cloud host serves queries and mutations and returns 404 for
+          # these routes; the scraper rejects it rather than failing at runtime.
+          KOFF_GALLERY_STATE_HTTP_URL: ${{ secrets.KOFF_GALLERY_STATE_HTTP_URL }}
+          KOFF_GALLERY_STATE_SECRET: ${{ secrets.KOFF_GALLERY_STATE_SECRET }}
         run: npm run scrape
       - name: Качване на Excel файловете като artifact
         uses: actions/upload-artifact@v4

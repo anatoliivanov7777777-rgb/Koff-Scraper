@@ -30,6 +30,38 @@ export const GALLERY_STATE_SECRET_HEADER = "x-koff-gallery-state-secret";
 /** Environment variable holding the dedicated gallery-state secret. */
 export const GALLERY_STATE_SECRET_ENV = "KOFF_GALLERY_STATE_SECRET";
 
+/** Environment variable holding the deployment's HTTP actions URL. */
+export const GALLERY_STATE_HTTP_URL_ENV = "KOFF_GALLERY_STATE_HTTP_URL";
+
+/**
+ * Validates the runtime configuration for the durable gallery store.
+ *
+ * Pure and side-effect free so it can be tested directly, and so the scraper
+ * can call it BEFORE anything else happens. With gallery fetching on there is
+ * no safe degraded mode - a missing secret must stop the run, not fall back to
+ * a different store or to "no state, fetch everything".
+ *
+ * Returns { ok, errors } where errors are operator-facing strings naming the
+ * offending variable. Never includes a value.
+ */
+export function validateGalleryStateConfig({ httpActionsUrl, secret } = {}) {
+  const errors = [];
+
+  if (!httpActionsUrl) {
+    errors.push(`${GALLERY_STATE_HTTP_URL_ENV} is required`);
+  } else if (!/^https:\/\//.test(httpActionsUrl)) {
+    errors.push(`${GALLERY_STATE_HTTP_URL_ENV} must be an https URL`);
+  } else if (/\.convex\.cloud/.test(httpActionsUrl)) {
+    errors.push(
+      `${GALLERY_STATE_HTTP_URL_ENV} must be the HTTP actions host (.convex.site), not .convex.cloud`
+    );
+  }
+
+  if (!secret) errors.push(`${GALLERY_STATE_SECRET_ENV} is required`);
+
+  return { ok: errors.length === 0, errors };
+}
+
 function requireConfig({ httpActionsUrl, secret }) {
   if (typeof httpActionsUrl !== "string" || !/^https:\/\//.test(httpActionsUrl)) {
     throw new Error("A Convex HTTP actions https URL is required");
