@@ -1,0 +1,9 @@
+{
+  "name": "koff-scraper-convex",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "convex": "^1.38.0"
+  }
+}

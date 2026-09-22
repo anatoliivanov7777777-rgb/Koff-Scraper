@@ -1,0 +1,6 @@
+# Local Convex linkage + credentials. NEVER commit: this file names the
+# deployment this app root talks to and can carry deployment secrets.
+.env.local
+
+# Root package dependencies for the Convex backend app.
+node_modules/
