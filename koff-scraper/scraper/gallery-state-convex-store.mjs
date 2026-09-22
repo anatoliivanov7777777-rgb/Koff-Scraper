@@ -30,16 +30,22 @@ export const GALLERY_STATE_SECRET_HEADER = "x-koff-gallery-state-secret";
 /** Environment variable holding the dedicated gallery-state secret. */
 export const GALLERY_STATE_SECRET_ENV = "KOFF_GALLERY_STATE_SECRET";
 
-function requireConfig({ deploymentUrl, secret }) {
-  if (typeof deploymentUrl !== "string" || !/^https:\/\//.test(deploymentUrl)) {
-    throw new Error("A Convex deployment https URL is required");
+function requireConfig({ httpActionsUrl, secret }) {
+  if (typeof httpActionsUrl !== "string" || !/^https:\/\//.test(httpActionsUrl)) {
+    throw new Error("A Convex HTTP actions https URL is required");
+  }
+  // The HTTP routes live on the deployment's .convex.site domain, NOT the
+  // .convex.cloud one that queries and mutations use. Pointing this at the
+  // wrong host is a silent 404, so it is rejected here rather than at runtime.
+  if (/\.convex\.cloud(\/|$)/.test(httpActionsUrl)) {
+    throw new Error("Use the HTTP actions URL (.convex.site), not the .convex.cloud deployment URL");
   }
   // Fail closed at construction: an adapter without a secret must never be
   // able to make a request that is silently unauthenticated.
   if (typeof secret !== "string" || !secret) {
     throw new Error(`${GALLERY_STATE_SECRET_ENV} is required for gallery state persistence`);
   }
-  return { base: deploymentUrl.replace(/\/+$/, ""), secret };
+  return { base: httpActionsUrl.replace(/\/+$/, ""), secret };
 }
 
 /**
@@ -51,13 +57,13 @@ function requireConfig({ deploymentUrl, secret }) {
  * bootstrap(), which is what actually seeds a fresh deployment.
  */
 export function createConvexGalleryStateStore({
-  deploymentUrl,
+  httpActionsUrl,
   secret,
   fetchImpl = globalThis.fetch,
   batchSize = DEFAULT_BATCH_SIZE,
   pageSize = DEFAULT_PAGE_SIZE,
 } = {}) {
-  const { base } = requireConfig({ deploymentUrl, secret });
+  const { base } = requireConfig({ httpActionsUrl, secret });
   if (typeof fetchImpl !== "function") throw new Error("A fetch implementation is required");
 
   async function call(path, body) {

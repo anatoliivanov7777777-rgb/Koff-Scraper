@@ -23,7 +23,7 @@ import { runIncrementalGalleryPass } from "../gallery-state-store.mjs";
 
 const NOW = 1_700_000_000_000;
 const RUN_ID = "35607622806";
-const URL_BASE = "https://example-deployment.convex.cloud";
+const URL_BASE = "https://example-deployment.convex.site";
 const SECRET = "fixture-only-gallery-state-secret-32-chars";
 
 /**
@@ -122,7 +122,7 @@ function stateChecksum(rows) {
 }
 
 const storeFor = (boundary, extra = {}) =>
-  createConvexGalleryStateStore({ deploymentUrl: URL_BASE, secret: SECRET, fetchImpl: boundary.fetchImpl, ...extra });
+  createConvexGalleryStateStore({ httpActionsUrl: URL_BASE, secret: SECRET, fetchImpl: boundary.fetchImpl, ...extra });
 
 // ==========================================================================
 // 1-4. Authentication
@@ -143,7 +143,7 @@ test("2. a request without the secret header is denied", async () => {
   // A store built with a blank secret cannot even be constructed - the point is
   // that no request leaves without the header.
   assert.throws(
-    () => createConvexGalleryStateStore({ deploymentUrl: URL_BASE, secret: "", fetchImpl: boundary.fetchImpl }),
+    () => createConvexGalleryStateStore({ httpActionsUrl: URL_BASE, secret: "", fetchImpl: boundary.fetchImpl }),
     new RegExp(GALLERY_STATE_SECRET_ENV)
   );
 });
@@ -249,7 +249,7 @@ test("7-10. every gallery-state route is secret-checked in http.ts", () => {
 test("7b-10b. the adapter is denied on every operation when the secret is wrong", async () => {
   const boundary = fakeBoundary({ expectedSecret: "correct-secret" });
   const store = createConvexGalleryStateStore({
-    deploymentUrl: URL_BASE,
+    httpActionsUrl: URL_BASE,
     secret: "wrong-secret",
     fetchImpl: boundary.fetchImpl,
   });
@@ -353,7 +353,7 @@ test("a failure before the meta write leaves the state NOT bootstrapped", async 
     return await boundary.fetchImpl(url, options);
   };
   const store = createConvexGalleryStateStore({
-    deploymentUrl: URL_BASE,
+    httpActionsUrl: URL_BASE,
     secret: SECRET,
     fetchImpl: flakyFetch,
     batchSize: 200,
@@ -454,10 +454,16 @@ test("an empty deployment reports unusable meta, never 'no state means fetch all
 
 test("a missing or malformed configuration is rejected, not silently unauthenticated", () => {
   assert.throws(() => createConvexGalleryStateStore({}), /https URL/);
-  assert.throws(() => createConvexGalleryStateStore({ deploymentUrl: "http://insecure" }), /https URL/);
-  assert.throws(() => createConvexGalleryStateStore({ deploymentUrl: URL_BASE }), new RegExp(GALLERY_STATE_SECRET_ENV));
+  assert.throws(() => createConvexGalleryStateStore({ httpActionsUrl: "http://insecure" }), /https URL/);
+  assert.throws(() => createConvexGalleryStateStore({ httpActionsUrl: URL_BASE }), new RegExp(GALLERY_STATE_SECRET_ENV));
   assert.throws(
-    () => createConvexGalleryStateStore({ deploymentUrl: URL_BASE, secret: SECRET, fetchImpl: null }),
+    () => createConvexGalleryStateStore({ httpActionsUrl: URL_BASE, secret: SECRET, fetchImpl: null }),
     /fetch implementation/
+  );
+  // The .convex.cloud host serves queries/mutations, not HTTP routes - using
+  // it here is a silent 404, so it is rejected up front.
+  assert.throws(
+    () => createConvexGalleryStateStore({ httpActionsUrl: "https://x-abc-123.eu-west-1.convex.cloud", secret: SECRET }),
+    /convex\.site/
   );
 });
