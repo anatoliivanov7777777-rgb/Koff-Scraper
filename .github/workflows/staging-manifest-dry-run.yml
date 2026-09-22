@@ -1,0 +1,151 @@
+name: Staging manifest dry-run (CaseKing aware-toucan-771)
+
+# Manual-only. This workflow produces a REVIEW MANIFEST - it never writes to
+# CaseKing. There is no schedule and no push trigger, deliberately.
+#
+# What it does:
+#   - scrapes the CURRENT koff.ro catalog READ-ONLY (GET only; no cart, no
+#     order, no account mutation), using the scraper's existing request policy
+#   - normalizes it with the SAME pure module production sync uses
+#   - resolves every product against CaseKing STAGING (read-only query)
+#   - emits a deterministic manifest + SHA-256 as an artifact for PM review
+#
+# What it does NOT do:
+#   - never calls koffStagingSync:updateExistingProducts
+#   - never touches elated-butterfly-122 or trustworthy-possum-230
+#   - never runs the CaseKing sync, fulfillment, or drain workflows
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: staging-manifest-dry-run
+  cancel-in-progress: false
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      # The single staging target. The tooling hard-fails on anything else.
+      STAGING_CONVEX_URL: "https://aware-toucan-771.eu-west-1.convex.cloud"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install scraper dependencies
+        working-directory: koff-scraper/scraper
+        run: npm install
+
+      - name: Guard - refuse any non-staging target
+        working-directory: koff-scraper/scraper
+        run: |
+          node -e '
+            const url = process.env.STAGING_CONVEX_URL || "";
+            const forbidden = ["elated-butterfly-122", "trustworthy-possum-230"];
+            const id = new URL(url).hostname.split(".")[0];
+            if (forbidden.includes(id)) { console.error("REFUSED: " + id); process.exit(1); }
+            if (id !== "aware-toucan-771") { console.error("REFUSED: not staging: " + id); process.exit(1); }
+            console.log("target guard OK: " + id);
+          '
+
+      - name: Scrape koff.ro catalog (READ-ONLY)
+        working-directory: koff-scraper/scraper
+        env:
+          KOFF_EMAIL: ${{ secrets.KOFF_EMAIL }}
+          KOFF_PASSWORD: ${{ secrets.KOFF_PASSWORD }}
+          # Gallery pass, reusing the existing incremental planner + durable
+          # state. An unchanged catalogue costs zero detail requests.
+          ENABLE_GALLERY_FETCH: "true"
+          KOFF_GALLERY_STATE_HTTP_URL: ${{ secrets.KOFF_GALLERY_STATE_HTTP_URL }}
+          KOFF_GALLERY_STATE_SECRET: ${{ secrets.KOFF_GALLERY_STATE_SECRET }}
+        run: npm run scrape
+
+      - name: Export gallery state for the normalizer
+        working-directory: koff-scraper/scraper
+        env:
+          KOFF_GALLERY_STATE_HTTP_URL: ${{ secrets.KOFF_GALLERY_STATE_HTTP_URL }}
+          KOFF_GALLERY_STATE_SECRET: ${{ secrets.KOFF_GALLERY_STATE_SECRET }}
+        run: |
+          node -e '
+            const { writeFileSync } = require("node:fs");
+            const URL_BASE = process.env.KOFF_GALLERY_STATE_HTTP_URL;
+            const SECRET = process.env.KOFF_GALLERY_STATE_SECRET;
+            if (!URL_BASE || !SECRET) { console.error("gallery state not configured"); process.exit(1); }
+            (async () => {
+              let cursor = null, done = false; const rows = [];
+              while (!done) {
+                const r = await fetch(URL_BASE + "/gallery-state/page", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json", "x-koff-gallery-state-secret": SECRET },
+                  body: JSON.stringify({ cursor }),
+                });
+                const j = await r.json();
+                if (!j.page) throw new Error("gallery page: " + JSON.stringify(j).slice(0, 200));
+                rows.push(...j.page);
+                done = j.isDone; cursor = j.continueCursor;
+              }
+              writeFileSync("gallery-state-export.json", JSON.stringify(rows));
+              console.error("exported gallery rows: " + rows.length);
+            })().catch((e) => { console.error(e.message); process.exit(1); });
+          '
+
+      - name: Product count BEFORE
+        working-directory: koff-scraper/scraper
+        run: |
+          node -e '
+            (async () => {
+              const base = process.env.STAGING_CONVEX_URL;
+              let c = null, done = false, n = 0;
+              while (!done) {
+                const r = await fetch(base + "/api/query", {
+                  method: "POST", headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ path: "products:getPage", args: { cursor: c }, format: "json" }),
+                });
+                const j = await r.json();
+                n += (j.value.page || []).length; done = j.value.isDone; c = j.value.continueCursor;
+              }
+              console.log("PRODUCT_COUNT_BEFORE=" + n);
+            })();
+          '
+
+      - name: Staging dry-run (normalize + resolve + manifest)
+        working-directory: koff-scraper/scraper
+        env:
+          CASEKING_STAGING_SYNC_SECRET: ${{ secrets.CASEKING_STAGING_SYNC_SECRET }}
+          CATALOG_PATH: koff-products-raw.json
+          GALLERY_PATH: gallery-state-export.json
+          OUT_DIR: staging-dry-run-out
+        run: node staging-dry-run.mjs
+
+      - name: Product count AFTER
+        working-directory: koff-scraper/scraper
+        run: |
+          node -e '
+            (async () => {
+              let c = null, done = false, n = 0;
+              while (!done) {
+                const r = await fetch("https://aware-toucan-771.eu-west-1.convex.cloud/api/query", {
+                  method: "POST", headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ path: "products:getPage", args: { cursor: c }, format: "json" }),
+                });
+                const j = await r.json();
+                n += (j.value.page || []).length; done = j.value.isDone; c = j.value.continueCursor;
+              }
+              console.log("PRODUCT_COUNT_AFTER=" + n);
+            })();
+          '
+
+      - name: Upload manifest + report
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-manifest-dry-run-${{ github.run_id }}
+          path: |
+            koff-scraper/scraper/staging-dry-run-out/staging-update-manifest.json
+            koff-scraper/scraper/staging-dry-run-out/staging-dry-run-report.json
+          retention-days: 14
+          if-no-files-found: error

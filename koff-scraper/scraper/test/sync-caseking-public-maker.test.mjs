@@ -89,9 +89,20 @@ test("name is now the naming engine's deterministic Bulgarian SEO output (Phase 
 });
 
 test("naming-engine.mjs IS now imported/wired into sync-caseking.mjs (Phase D)", () => {
+  // The normalization logic (and therefore the naming engine) now lives in a
+  // side-effect-free module so the staging dry-run can reuse it without
+  // tripping this file's production-target guard. The wiring is unchanged in
+  // substance - it is just reached through that module now - so the assertion
+  // follows it rather than being dropped.
   const source = readFileSync(new URL("../sync-caseking.mjs", import.meta.url), "utf8");
-  assert.match(source, /from\s+["']\.\/naming-engine\.mjs["']/);
-  assert.match(source, /generateProductName\(/);
+  assert.match(source, /from\s+["']\.\/caseking-product-normalization\.mjs["']/);
+
+  const normSource = readFileSync(
+    new URL("../caseking-product-normalization.mjs", import.meta.url),
+    "utf8"
+  );
+  assert.match(normSource, /from\s+["']\.\/naming-engine\.mjs["']/);
+  assert.match(normSource, /generateProductName\(/);
 });
 
 test("no blind global Techsuit string replace exists in sync-caseking.mjs", () => {
