@@ -56,6 +56,15 @@ jobs:
         env:
           KOFF_EMAIL: ${{ secrets.KOFF_EMAIL }}
           KOFF_PASSWORD: ${{ secrets.KOFF_PASSWORD }}
+          # Incremental gallery pass. Durable state lives in the dedicated Koff
+          # Convex project and is reused every run, so only the candidates the
+          # planner selects receive a product-detail GET - an unchanged
+          # catalogue costs none. More than 500 candidates, or more than 2% of
+          # the catalogue, aborts detail fetching and requests nothing. A full
+          # refresh stays disabled: FULL_GALLERY_REFRESH is deliberately not set.
+          ENABLE_GALLERY_FETCH: "true"
+          KOFF_GALLERY_STATE_HTTP_URL: ${{ secrets.KOFF_GALLERY_STATE_HTTP_URL }}
+          KOFF_GALLERY_STATE_SECRET: ${{ secrets.KOFF_GALLERY_STATE_SECRET }}
         run: npm run scrape
 
       - name: Sync to CaseKing Convex
