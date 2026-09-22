@@ -9,10 +9,16 @@
 // product expands into several CaseKing storefront rows, so a variant name,
 // slug or product name must never key this table.
 //
-// NOTE: these functions are not deployed by the change that added them. The
-// Koff-side Convex deployment has not been proven or authorised yet.
+// ACCESS MODEL
+// Every function here is INTERNAL (internalQuery/internalMutation). None of
+// them can be reached from a browser or an unauthenticated client: Convex only
+// exposes internal functions to other Convex functions, never as a public API.
+// The only way in is the secret-checked HTTP boundary in http.ts, which calls
+// these after it has authenticated the caller. That is deliberate - a writable
+// gallery-state endpoint open to the internet would let anyone overwrite the
+// gallery record for any product.
 
-import { query, mutation } from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 
 const META_KEY = "gallery";
@@ -30,8 +36,10 @@ const galleryRowValidator = v.object({
   status: v.union(v.literal("ready"), v.literal("failed"), v.literal("missing")),
 });
 
+export const galleryRowShape = galleryRowValidator;
+
 /** The global gallery metadata, or null when the deployment has none yet. */
-export const getGalleryMeta = query({
+export const getGalleryMeta = internalQuery({
   args: {},
   handler: async (ctx) => {
     const row = await ctx.db
@@ -53,10 +61,11 @@ export const getGalleryMeta = query({
  * One page of gallery state rows.
  *
  * Paginated on purpose: 28k rows cannot be collected inside Convex's 16MB
- * per-execution read limit, so the store walks pages rather than asking for
- * everything at once.
+ * per-execution read limit, so callers walk pages rather than asking for
+ * everything at once. There is deliberately NO server-side aggregate query -
+ * totals are computed by the caller while walking pages.
  */
-export const getGalleryStatePage = query({
+export const getGalleryStatePage = internalQuery({
   args: { cursor: v.union(v.string(), v.null()), numItems: v.number() },
   handler: async (ctx, args) => {
     const result = await ctx.db.query("galleryState").paginate({
@@ -82,22 +91,6 @@ export const getGalleryStatePage = query({
   },
 });
 
-/** Rows currently held, and the total gallery URLs they carry. */
-export const getGalleryStateStats = query({
-  args: {},
-  handler: async (ctx) => {
-    let count = 0;
-    let images = 0;
-    // Bounded scan: same reason as above - never collect the whole table.
-    for await (const row of ctx.db.query("galleryState")) {
-      count++;
-      images += Array.isArray(row.galleryUrls) ? row.galleryUrls.length : 0;
-      if (count > 200000) break;
-    }
-    return { count, images };
-  },
-});
-
 /**
  * Upsert a bounded batch of rows.
  *
@@ -105,7 +98,7 @@ export const getGalleryStateStats = query({
  * documents. Idempotent per sourceProductId - re-running an import converges
  * on the same state rather than duplicating rows.
  */
-export const upsertGalleryStateBatch = mutation({
+export const upsertGalleryStateBatch = internalMutation({
   args: { rows: v.array(galleryRowValidator) },
   handler: async (ctx, args) => {
     let inserted = 0;
@@ -134,7 +127,7 @@ export const upsertGalleryStateBatch = mutation({
  * been written - that ordering is what makes `bootstrapCompleted` mean "the
  * state is complete" rather than "an import was attempted".
  */
-export const setGalleryMeta = mutation({
+export const setGalleryMeta = internalMutation({
   args: {
     schemaVersion: v.number(),
     bootstrapCompleted: v.boolean(),

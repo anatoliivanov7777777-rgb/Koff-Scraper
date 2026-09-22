@@ -12,6 +12,11 @@
     "skipLibCheck": true,
     "allowSyntheticDefaultImports": true,
 
+    /* Convex functions run on Node, and http.ts reads process.env. TypeScript
+     * does not pick @types/node up automatically here, so it is named
+     * explicitly. */
+    "types": ["node"],
+
     /* These compiler options are required by Convex */
     "target": "ESNext",
     "lib": ["ES2023", "dom"],

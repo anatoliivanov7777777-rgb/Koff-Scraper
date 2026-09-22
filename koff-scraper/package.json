@@ -5,5 +5,9 @@
   "type": "module",
   "dependencies": {
     "convex": "^1.38.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "typescript": "^7.0.2"
   }
 }
