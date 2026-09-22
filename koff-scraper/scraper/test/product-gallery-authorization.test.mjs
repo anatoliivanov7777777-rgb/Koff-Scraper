@@ -194,8 +194,12 @@ test("18. gallery fetching remains opt-in in scrape.mjs", () => {
   // And the only gallery pass is guarded by it.
   const guard = source.indexOf("if (ENABLE_GALLERY_FETCH) {");
   assert.notEqual(guard, -1);
-  assert.ok(source.includes("fetchGalleriesBounded("));
-  assert.ok(source.includes("idsToFetch"));
+  // The gallery pass - now planner-driven - still sits inside that guard, and
+  // still reaches Koff only through the hardened bounded pool.
+  const guardBody = source.slice(guard);
+  assert.ok(guardBody.includes("runIncrementalGalleryPass("));
+  assert.ok(guardBody.includes("fetchGalleriesBounded("));
+  assert.ok(guardBody.includes("GALLERY_FETCH_CONCURRENCY"));
   // The redundant per-category sleep is gone, so pacing is not stacked.
   assert.doesNotMatch(source, /setTimeout\(r,\s*300\)/);
 });

@@ -8,6 +8,8 @@ import { addVat, calcB2BPrice, calcB2CPrice } from "./pricing.mjs";
 import { mapToConvexProduct } from "./product-mapping.mjs";
 import { createKoffClient } from "./koff-client.mjs";
 import { fetchGalleriesBounded } from "./product-gallery.mjs";
+import { GALLERY_STATUS } from "./gallery-state.mjs";
+import { createFileGalleryStateStore, runIncrementalGalleryPass } from "./gallery-state-store.mjs";
 
 // Папка, в която се записват готовите .xlsx файлове за импорт в case-king.bg
 // (GitHub Actions ги качва като "artifact" след всеки run - виж workflow-а).
@@ -30,6 +32,18 @@ const ENABLE_KOFF_CONVEX_INGEST = process.env.ENABLE_KOFF_CONVEX_INGEST === "tru
 // degrades safely to today's single-cover-image behavior for that product,
 // never to a missing/empty image.
 const ENABLE_GALLERY_FETCH = process.env.ENABLE_GALLERY_FETCH === "true";
+
+// Explicit, operator-only escape hatch for an intentional FULL gallery
+// refresh. Off by default and never set by any workflow. In normal operation
+// the gallery pass is incremental: it re-fetches only products whose gallery
+// state says something actually changed, so a weekly run costs a handful of
+// detail requests instead of one per catalog product.
+const FULL_GALLERY_REFRESH = process.env.FULL_GALLERY_REFRESH === "true";
+
+// Where incremental gallery state lives between runs. The file store needs no
+// infrastructure; a Convex-backed store can implement the same interface later.
+const GALLERY_STATE_FILE = process.env.GALLERY_STATE_FILE || `${EXPORT_OUT_DIR}/koff-gallery-state.json`;
+
 const rawGalleryConcurrency = Number.parseInt(process.env.GALLERY_FETCH_CONCURRENCY ?? "", 10);
 const GALLERY_FETCH_CONCURRENCY = Number.isInteger(rawGalleryConcurrency) && rawGalleryConcurrency > 0
   ? Math.min(rawGalleryConcurrency, 20)
@@ -236,31 +250,70 @@ async function main() {
   // `images:[cover]` overwrite that would erase an existing multi-image
   // gallery just because this one run's detail request errored out.
   if (ENABLE_GALLERY_FETCH) {
-    const idsToFetch = payload
-      .map((product) => product.sourceProductId)
-      .filter((id) => Number.isInteger(id) && id > 0);
-    console.log(
-      `Извличам допълнителна галерия за ${idsToFetch.length} продукта ` +
-        `(concurrency ${GALLERY_FETCH_CONCURRENCY})...`
-    );
-    const { galleries, counters, abortedForAuthorization } = await fetchGalleriesBounded(
-      koffClient,
-      idsToFetch,
-      { concurrency: GALLERY_FETCH_CONCURRENCY }
-    );
-    console.log(
-      `Галерии: опитани ${counters.attempted}, успешни ${counters.succeeded}, ` +
-        `неуспешни ${counters.failed}, общо намерени снимки ${counters.totalImagesFound}`
-    );
-    if (abortedForAuthorization) {
-      console.error(
-        "Галериите са прекъснати: Koff върна 401/403. Продуктите без галерия остават без промяна."
+    // Only products whose gallery may actually need discovery/refresh become
+    // detail requests; everything else is served from stored state. The pass
+    // owns the load -> plan -> guard -> fetch -> save order, so the mass-request
+    // guard cannot be bypassed by accident, and an uninitialised/corrupt state
+    // file aborts with ZERO requests rather than being read as "fetch all".
+    const productIds = payload
+      .filter((product) => Number.isInteger(product.sourceProductId) && product.sourceProductId > 0)
+      .map((product) => product.sourceProductId);
+
+    const galleryStore = createFileGalleryStateStore(GALLERY_STATE_FILE);
+    let abortedForAuthorization = false;
+    const { plan } = await runIncrementalGalleryPass({
+      store: galleryStore,
+      catalog: payload,
+      now: Date.now(),
+      fullRefresh: FULL_GALLERY_REFRESH,
+      fetchGalleries: async (ids) => {
+        console.log(
+          `Извличам галерия за ${ids.length} от ${payload.length} продукта ` +
+            `(concurrency ${GALLERY_FETCH_CONCURRENCY})...`
+        );
+        const outcome = await fetchGalleriesBounded(koffClient, ids, {
+          concurrency: GALLERY_FETCH_CONCURRENCY,
+        });
+        abortedForAuthorization = outcome.abortedForAuthorization;
+        console.log(
+          `Галерии: опитани ${outcome.counters.attempted}, успешни ${outcome.counters.succeeded}, ` +
+            `неуспешни ${outcome.counters.failed}, общо намерени снимки ${outcome.counters.totalImagesFound}`
+        );
+        return outcome;
+      },
+    });
+
+    if (plan.abort) {
+      console.error(`Галерийното обхождане е прекъснато: ${plan.reason}. Нула заявки към Koff.`);
+    } else {
+      console.log(
+        `Галерийно състояние: ${plan.mode}, кандидати ${plan.candidates.length}` +
+          ` (${plan.candidatePercent.toFixed(2)}% от ${plan.catalogSize}), ` +
+          `причини ${JSON.stringify(plan.counts)}`
       );
+      if (abortedForAuthorization) {
+        console.error(
+          "Галериите са прекъснати: Koff върна 401/403. Продуктите без галерия остават без промяна."
+        );
+      }
     }
+
+    // Gallery output: freshly fetched where we just fetched, otherwise the
+    // stored gallery. Unchanged products are exactly the case this whole
+    // mechanism exists for, so they must still carry their known gallery
+    // downstream rather than looking like "no gallery data this run".
+    const storedState = await galleryStore.load();
+    const byId = new Map(storedState.rows.map((row) => [row.sourceProductId, row]));
     for (const product of payload) {
-      const result = galleries.get(product.sourceProductId);
-      if (result?.ok) product.images = result.images;
+      const row = byId.get(product.sourceProductId);
+      if (row && row.status === GALLERY_STATUS.READY && row.galleryUrls.length > 0) {
+        product.images = row.galleryUrls;
+      }
     }
+    console.log(
+      `Галерийни изображения в payload: ` +
+        `${payload.filter((p) => Array.isArray(p.images) && p.images.length > 0).length} продукта`
+    );
   }
 
   // Per-run request telemetry. Counters only - no URLs, no credentials.
