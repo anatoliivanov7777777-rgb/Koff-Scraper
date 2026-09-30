@@ -302,6 +302,16 @@ export function buildCaseKingProducts(raw, categorySlug) {
   const gallerySucceeded = Array.isArray(raw.images);
   const commonFields = {
     id: null,
+    // The supplier's own raw title, sent alongside `name` rather than instead
+    // of it. `name` stays the naming engine's proposal, which is now only a
+    // DRAFT: CaseKing decides the published name server-side from this raw
+    // title (its family rules), and keeps this value as nameEn so English
+    // search still finds the product.
+    //
+    // Convex reads it on the INSERT path only, so an existing product is never
+    // re-stamped with it. Omitted when Koff returned no title at all, which
+    // CaseKing treats as "a product nobody can name yet" and holds for review.
+    ...(raw.name ? { supplierName: raw.name } : {}),
     ...(koffImages.length > 0 ? { image: koffImages[0] } : {}),
     ...(gallerySucceeded && koffImages.length > 0 ? { images: koffImages } : {}),
     rating: 5,
