@@ -3,10 +3,12 @@
 // ----------------------------------------------------------------------------
 // Why this exists as a SEPARATE tool rather than a flag on sync-caseking.mjs:
 //
-// sync-caseking.mjs is hard-gated to elated-butterfly-122 (production) and
-// throws for anything else. That guard is correct and is left completely
-// untouched. Rather than weaken it, this tool is the second, deliberately
-// narrower path: staging-only, update-existing-only, dry-run by default.
+// sync-caseking.mjs is hard-gated to exactly one deployment and throws for
+// anything else - elated-butterfly-122 when this tool was written, the dev
+// deployment aware-toucan-771 since 2026-10-01, when the owner made that the
+// shop. That guard is correct and is left completely untouched. Rather than
+// weaken it, this tool is the second, deliberately narrower path:
+// update-existing-only, dry-run by default.
 //
 // Two properties this tool must have structurally, not by convention:
 //

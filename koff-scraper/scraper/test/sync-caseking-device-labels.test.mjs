@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 // network calls and never touches stored brand/model/sourceKey (those
 // come from bm.brand/bm.model directly in buildCaseKingProducts, never
 // from this function's output).
-process.env.CASEKING_CONVEX_URL = "https://elated-butterfly-122.eu-west-1.convex.cloud";
+process.env.CASEKING_CONVEX_URL = "https://aware-toucan-771.eu-west-1.convex.cloud";
 
 const { deviceLabel, buildCaseKingProducts } = await import("../sync-caseking.mjs");
 

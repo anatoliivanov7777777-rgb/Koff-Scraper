@@ -53,18 +53,27 @@ test("sync-caseking.mjs imports normalization from the extracted module", () => 
   assert.doesNotMatch(sync, /^function normalizeAccessoryBrand/m);
 });
 
-test("the production destination guard is byte-unchanged", () => {
+test("the destination guard still pins exactly one owned deployment", () => {
   const sync = readFileSync(new URL("../sync-caseking.mjs", import.meta.url), "utf8");
-  assert.match(sync, /const OWNED_CASEKING_CONVEX_URL = "https:\/\/elated-butterfly-122\.eu-west-1\.convex\.cloud";/);
+  // The target moved from elated-butterfly-122 to the dev deployment on
+  // 2026-10-01, when the owner made aware-toucan-771 the shop. The guard's
+  // SHAPE is what this test protects and it is unchanged: one constant in
+  // code, not a value read from the environment, checked before any write.
+  assert.match(sync, /const OWNED_CASEKING_CONVEX_URL = "https:\/\/aware-toucan-771\.eu-west-1\.convex\.cloud";/);
   assert.match(sync, /if \(CASEKING_CONVEX_URL !== OWNED_CASEKING_CONVEX_URL\) \{/);
   assert.match(sync, /throw new Error\("CASEKING_CONVEX_URL must point to the owned CaseKing deployment"\);/);
   assert.match(sync, /if \(CLEANUP\) throw new Error\("CLEANUP is disabled for the Koff → CaseKing sync"\);/);
-  // The approved operation allow-list must still be the same five.
+  // The approved operation allow-list: the original five, plus the four
+  // koffSyncFeed operations the feed reconciliation (G5 1a) needs.
   assert.match(sync, /"products:backfillMatchKeys"/);
   assert.match(sync, /"products:upsertBatch"/);
   assert.match(sync, /"meta:addBrand"/);
   assert.match(sync, /"meta:addModel"/);
   assert.match(sync, /"meta:countProductsByCategory"/);
+  assert.match(sync, /"koffSyncFeed:pageSyncedProducts"/);
+  assert.match(sync, /"koffSyncFeed:zeroStockNotInFeed"/);
+  assert.match(sync, /"koffSyncFeed:recordSyncRun"/);
+  assert.match(sync, /"koffSyncFeed:previousRun"/);
 });
 
 // ==========================================================================
@@ -143,6 +152,23 @@ test("image and images follow the existing buildKoffImages rules", () => {
 test("image is omitted when Koff returns no usable cover", () => {
   const noImg = norm.buildCaseKingProducts({ ...RAW, imageUrl: "" }, "keysove-i-kalufi");
   assert.equal(noImg[0].image, undefined);
+});
+
+test("the supplier's raw title travels as supplierName, and is omitted when absent", () => {
+  // This is the field CaseKing names the product FROM: the naming rules are
+  // keyed on the supplier's own title (catalogNaming:familyKey), and a row
+  // that arrives without one is held for review instead of being published.
+  for (const r of built().rows) {
+    assert.equal(r.supplierName, RAW.name);
+  }
+
+  // No title from Koff => the field is omitted entirely, never an empty
+  // string: CaseKing reads a missing supplierName as "nobody can name this
+  // yet" and sends the product to the review queue.
+  const untitled = norm.buildCaseKingProducts({ ...RAW, name: "" }, "keysove-i-kalufi");
+  for (const r of untitled) {
+    assert.equal("supplierName" in r, false);
+  }
 });
 
 test("priceB2C and priceB2B come from the existing pricing functions, and end in .99", () => {

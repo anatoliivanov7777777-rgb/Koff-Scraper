@@ -1,8 +1,10 @@
 // Синхронизира вече скрейпнатите koff.ro продукти директно в Convex базата
-// на case-king.bg - по същия начин, по който прави техния собствен admin
+// на магазина - по същия начин, по който прави техния собствен admin
 // импорт панел (виж admin.js:confirmCSVImport в техния repo).
 //
-// БЕЗОПАСНОСТ: пише директно в ЖИВАТА база данни на реалния сайт. По
+// БЕЗОПАСНОСТ: пише директно в базата на магазина. От 2026-10-01 магазинът,
+// който разработваме, е dev деплойментът aware-toucan-771; старият жив сайт
+// (elated-butterfly-122) се пенсионира и вече НЕ е разрешена цел. По
 // подразбиране работи в DRY RUN режим (нищо не се записва, само показва
 // какво би направил).
 //
@@ -15,12 +17,22 @@ import { ConvexHttpClient } from "convex/browser";
 import fs from "fs";
 import { pathToFileURL } from "node:url";
 
-const OWNED_CASEKING_CONVEX_URL = "https://elated-butterfly-122.eu-west-1.convex.cloud";
+// Единственият деплоймент, в който този sync има право да пише. Умишлено е
+// константа в кода, а не стойност, прочетена от средата: CASEKING_CONVEX_URL
+// идва от GitHub secrets и може да бъде сменен без review, така че реалното
+// решение коя база е позволена се взема от проверката по-долу, не от secret-а.
+// Сменена е от elated-butterfly-122 на 2026-10-01, когато магазинът се мести
+// върху dev деплоймента.
+const OWNED_CASEKING_CONVEX_URL = "https://aware-toucan-771.eu-west-1.convex.cloud";
 const CASEKING_CONVEX_URL = process.env.CASEKING_CONVEX_URL;
 const CASEKING_SYNC_SECRET = process.env.CASEKING_SYNC_SECRET;
 
 const LIVE = process.env.LIVE === "true";
 const CLEANUP = process.env.CLEANUP === "true";
+// "dry" (подразбиране) = само брои и печата; "apply" = нулира реално.
+// Продуктите, които доставчикът вече не предлага, губят наличността си -
+// виж reconcileFeedStock по-долу.
+const STOCK_ZERO_MODE = process.env.STOCK_ZERO_MODE === "apply" ? "apply" : "dry";
 if (CLEANUP) throw new Error("CLEANUP is disabled for the Koff → CaseKing sync");
 if (CASEKING_CONVEX_URL !== OWNED_CASEKING_CONVEX_URL) {
   throw new Error("CASEKING_CONVEX_URL must point to the owned CaseKing deployment");
@@ -35,10 +47,24 @@ const SYNC_OPERATIONS = new Set([
   "meta:addBrand",
   "meta:addModel",
   "meta:countProductsByCategory",
+  // The feed reconciliation (convex/koffSyncFeed.ts on the CaseKing side):
+  // what the supplier no longer lists gets stock 0, so it leaves the
+  // storefront. Two reads, two writes, all four secret-gated.
+  "koffSyncFeed:pageSyncedProducts",
+  "koffSyncFeed:zeroStockNotInFeed",
+  "koffSyncFeed:recordSyncRun",
+  "koffSyncFeed:previousRun",
 ]);
-function syncMutation(convex, operation, args) {
+function assertSyncOperation(operation) {
   if (!SYNC_OPERATIONS.has(operation)) throw new Error("Operation is not approved for machine sync");
+}
+function syncMutation(convex, operation, args) {
+  assertSyncOperation(operation);
   return convex.mutation(operation, { ...args, syncSecret: CASEKING_SYNC_SECRET });
+}
+function syncQueryCall(convex, operation, args) {
+  assertSyncOperation(operation);
+  return convex.query(operation, { ...args, syncSecret: CASEKING_SYNC_SECRET });
 }
 const LIMIT_RAW = (process.env.LIMIT || "").trim().toLowerCase();
 const LIMIT = LIMIT_RAW && LIMIT_RAW !== "all" ? parseInt(LIMIT_RAW, 10) : null;
@@ -108,10 +134,172 @@ async function refreshCategoryCounts(convex) {
   return countsSoFar;
 }
 
+// ---------------------------------------------------------------------------
+// СТЪПКА G5 1a: продуктите, които доставчикът вече не предлага, губят наличност
+// ---------------------------------------------------------------------------
+// Инструкцията на собственика (2026-10-01): "Продукти, които не са в
+// наличност задължително трябва да се махат от сайта." Sync-ът обновява само
+// редовете, които СА в feed-а - продукт, който доставчикът е спрял, не
+// присъства в payload-а и нищо не го пипа. Тази стъпка затваря другата
+// половина: всеки ред със source "koff-sync", чийто sourceKey не е в feed-а
+// на ТОЗИ run, получава stock: 0 (само stock - виж koffSyncFeed.ts).
+//
+//   STOCK_ZERO_MODE=dry    (подразбиране) - брои и печата, не пише
+//   STOCK_ZERO_MODE=apply                 - нулира реално, партиди по 200
+//
+// Предпазител: ако feed-ът на този run е под 90% от последния успешен run,
+// стъпката се прескача изцяло и се отчита - счупено или частично сваляне
+// никога не бива да изпразва магазина. Редове без sourceKey никога не се
+// пипат; те се отчитат отделно, за да ги види човек.
+const FEED_DROP_RATIO = 0.9;
+const STOCK_ZERO_CHUNK = 200;
+
+// Чиста функция - тества се директно (test/sync-caseking-feed-stock.test.mjs).
+// Връща кои редове подлежат на нулиране и кои са отказани и защо.
+export function feedStockChanges(syncedProducts, feedKeys) {
+  const toZero = [];
+  const missingSourceKey = [];
+  let alreadyZero = 0;
+  for (const p of syncedProducts) {
+    // Ред без стабилна доставчикова идентичност не може да се провери срещу
+    // feed-а. Отказваме се и го отчитаме - никога не гадаем.
+    if (typeof p.sourceKey !== "string" || p.sourceKey === "") {
+      missingSourceKey.push(p.productId);
+      continue;
+    }
+    if (feedKeys.has(p.sourceKey)) continue;
+    // Вече е нула - няма какво да се пише (идемпотентност).
+    if (p.stock === 0) {
+      alreadyZero += 1;
+      continue;
+    }
+    toZero.push({ productId: p.productId, expectedSourceKey: p.sourceKey });
+  }
+  return { toZero, missingSourceKey, alreadyZero };
+}
+
+// Чиста функция: по-малко от 90% от предишния успешен run = съмнителен спад.
+// Без база (първи run) не се задейства - предпазителят пази от СПАД, а
+// MIN_RAW проверката по-горе вече пази от грубо счупено сваляне.
+export function isFeedDrop(currentKeys, previousKeys) {
+  if (!Number.isFinite(previousKeys) || previousKeys <= 0) return false;
+  return currentKeys < previousKeys * FEED_DROP_RATIO;
+}
+
+async function reconcileFeedStock(convex, caseKingProducts, runMeta) {
+  console.log("\n--- Стъпка G5 1a: продукти извън feed-а (stock 0) ---");
+  const run = { ...runMeta, finishedAt: new Date().toISOString() };
+
+  const feedKeys = new Set();
+  for (const p of caseKingProducts) {
+    if (typeof p.sourceKey === "string" && p.sourceKey !== "") feedKeys.add(p.sourceKey);
+  }
+
+  // Тестов run с LIMIT не бива да пипа нищо: feed-ът е само първите N
+  // продукта и всичко останало изглежда "извън feed-а".
+  if (LIMIT) {
+    console.log(`  ПРЕСКОЧЕНО: тестов run с LIMIT=${LIMIT} (feed-ът е частичен).`);
+    return null;
+  }
+
+  const previous = await syncQueryCall(convex, "koffSyncFeed:previousRun", {});
+  // previousRun връща последния run, минал предпазителя. Ако ВСЕКИ записан досега
+  // run е бил спад, връща последния такъв - и тогава също се прескача, вместо
+  // спадът да се приеме за база.
+  const previousWasDrop = previous?.stockZeroMode === "skipped-feed-drop";
+  if (previous && (previousWasDrop || isFeedDrop(feedKeys.size, previous.feedKeys))) {
+    const detail = previousWasDrop
+      ? `нито един записан run не е минал предпазителя (последен: ${previous.feedKeys} ключа, ${previous.startedAt})`
+      : `feed-ът е ${feedKeys.size} ключа = ` +
+        `${((feedKeys.size / previous.feedKeys) * 100).toFixed(1)}% от последния минал предпазителя run ` +
+        `(${previous.feedKeys}, ${previous.startedAt})`;
+    console.log(
+      `  ⛔ ПРЕСКОЧЕНО: ${detail}. Счупено или частично сваляне не бива да ` +
+        `изпразва магазина - нищо не е пипано.`
+    );
+    await syncMutation(convex, "koffSyncFeed:recordSyncRun", {
+      run: { ...run, feedKeys: feedKeys.size, notInFeed: 0, zeroed: 0, stockZeroMode: "skipped-feed-drop" },
+    });
+    return { feedKeys: feedKeys.size, notInFeed: 0, zeroed: 0, skipped: true };
+  }
+  if (!previous) console.log("  (няма предишен успешен run - предпазителят за спад не се прилага)");
+
+  // Четем всички редове на sync-а (само id/sourceKey/stock) и изчисляваме
+  // разликата локално - feed-ът е в този процес, не в базата.
+  const synced = [];
+  let cursor = null;
+  for (;;) {
+    const page = await syncQueryCall(convex, "koffSyncFeed:pageSyncedProducts", { cursor, pageSize: 1000 });
+    synced.push(...page.products);
+    cursor = page.continueCursor;
+    if (page.isDone) break;
+  }
+  const { toZero, missingSourceKey, alreadyZero } = feedStockChanges(synced, feedKeys);
+  // Редовете, които чакат човек в "За преглед" - за отчета на run-а (те и без
+  // това не се показват в сайта, докато не бъдат именувани).
+  const pendingReview = synced.filter((p) => p.reviewStatus === "pending").length;
+  console.log(
+    `  Синхронизирани редове: ${synced.length}; извън feed-а за нулиране: ${toZero.length}; ` +
+      `вече с 0: ${alreadyZero}; без sourceKey (не се пипат): ${missingSourceKey.length}; ` +
+      `в "За преглед": ${pendingReview}`
+  );
+
+  const dryRun = STOCK_ZERO_MODE !== "apply";
+  let zeroed = 0;
+  let wouldZero = 0;
+  const skipReasons = new Map();
+  for (let i = 0; i < toZero.length; i += STOCK_ZERO_CHUNK) {
+    const res = await syncMutation(convex, "koffSyncFeed:zeroStockNotInFeed", {
+      rows: toZero.slice(i, i + STOCK_ZERO_CHUNK),
+      dryRun,
+    });
+    zeroed += res.zeroed;
+    wouldZero += res.wouldZero;
+    for (const s of res.skipped) skipReasons.set(s.reason, (skipReasons.get(s.reason) || 0) + 1);
+  }
+
+  if (dryRun) {
+    console.log(
+      `  DRY RUN: ${wouldZero} продукта БИХА получили stock 0. Няма запис - ` +
+        `за реален запис пусни с STOCK_ZERO_MODE=apply.`
+    );
+  } else {
+    console.log(`  APPLY: ${zeroed} продукта получиха stock 0.`);
+  }
+  for (const [reason, n] of skipReasons) console.log(`  отказани (${reason}): ${n}`);
+
+  await syncMutation(convex, "koffSyncFeed:recordSyncRun", {
+    run: {
+      ...run,
+      feedKeys: feedKeys.size,
+      notInFeed: toZero.length,
+      zeroed: dryRun ? 0 : zeroed,
+      stockZeroMode: dryRun ? "dry" : "applied",
+    },
+  });
+  return {
+    feedKeys: feedKeys.size,
+    notInFeed: toZero.length,
+    zeroed: dryRun ? 0 : zeroed,
+    wouldZero,
+    alreadyZero,
+    missingSourceKey: missingSourceKey.length,
+    pendingReview,
+    mode: STOCK_ZERO_MODE,
+    skipped: false,
+  };
+}
+
 async function main() {
+  const startedAt = new Date().toISOString();
   console.log(`Режим: ${LIVE ? "LIVE" : "DRY RUN (само преглед)"}`);
 
   if (LIMIT) console.log(`Лимит за тест: първите ${LIMIT} суровини продукта`);
+  if (LIVE) {
+    console.log(
+      `Стъпка G5 1a (продукти извън feed-а): ${STOCK_ZERO_MODE === "apply" ? "APPLY" : "DRY RUN"}`
+    );
+  }
 
   const raw = fs.readFileSync("./koff-products-raw.json", "utf-8");
   let rawProducts = JSON.parse(raw);
@@ -294,6 +482,15 @@ async function main() {
   // Броячите на плочките в "Категории" са записано поле, не се смятат в
   // движение - без това извикване всички показват 0 след sync.
   await refreshCategoryCounts(convex);
+
+  // Последна стъпка, и само след успешен запис: продукт, който доставчикът
+  // вече не предлага, напуска сайта (виж коментара при reconcileFeedStock).
+  await reconcileFeedStock(convex, caseKingProducts, {
+    startedAt,
+    rawProducts: rawProducts.length,
+    created: totalCreated,
+    updated: totalUpdated,
+  });
 }
 
 // Guarded so this module can be imported (e.g. from tests, to exercise
