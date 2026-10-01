@@ -70,7 +70,12 @@ jobs:
       - name: Sync to CaseKing Convex
         working-directory: koff-scraper/scraper
         env:
-          CASEKING_CONVEX_URL: ${{ secrets.CASEKING_CONVEX_URL }}
+          # Its OWN secret, deliberately not the shared CASEKING_CONVEX_URL:
+          # that one is the fulfillment workers' input, and they hard-pin the
+          # old production deployment (elated-butterfly-122) because the live
+          # shop's orders are still fulfilled from there. The env var NAME
+          # stays as the script expects it; only the source differs.
+          CASEKING_CONVEX_URL: ${{ secrets.CASEKING_SYNC_CONVEX_URL }}
           CASEKING_SYNC_SECRET: ${{ secrets.CASEKING_SYNC_SECRET }}
           LIVE: ${{ github.event.inputs.live || 'true' }}
           LIMIT: ${{ github.event.inputs.limit || 'all' }}
