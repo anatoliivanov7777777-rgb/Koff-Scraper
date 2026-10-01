@@ -21,7 +21,7 @@ import fs from "node:fs";
 // functions are exercised. Importing sync-caseking.mjs does NOT run main()
 // (it is guarded to run only when the file is executed directly).
 
-process.env.CASEKING_CONVEX_URL = "https://elated-butterfly-122.eu-west-1.convex.cloud";
+process.env.CASEKING_CONVEX_URL = "https://aware-toucan-771.eu-west-1.convex.cloud";
 // Safety belt: even if the ambient environment has LIVE=true, this file must
 // never be able to drive a real synchronization.
 process.env.LIVE = "false";

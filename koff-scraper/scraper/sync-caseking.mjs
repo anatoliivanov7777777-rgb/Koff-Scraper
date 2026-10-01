@@ -1,8 +1,10 @@
 // Синхронизира вече скрейпнатите koff.ro продукти директно в Convex базата
-// на case-king.bg - по същия начин, по който прави техния собствен admin
+// на магазина - по същия начин, по който прави техния собствен admin
 // импорт панел (виж admin.js:confirmCSVImport в техния repo).
 //
-// БЕЗОПАСНОСТ: пише директно в ЖИВАТА база данни на реалния сайт. По
+// БЕЗОПАСНОСТ: пише директно в базата на магазина. От 2026-10-01 магазинът,
+// който разработваме, е dev деплойментът aware-toucan-771; старият жив сайт
+// (elated-butterfly-122) се пенсионира и вече НЕ е разрешена цел. По
 // подразбиране работи в DRY RUN режим (нищо не се записва, само показва
 // какво би направил).
 //
@@ -22,7 +24,13 @@ import { resolvePublicMaker } from "./public-maker.mjs";
 import { generateProductName } from "./naming-engine.mjs";
 import { pathToFileURL } from "node:url";
 
-const OWNED_CASEKING_CONVEX_URL = "https://elated-butterfly-122.eu-west-1.convex.cloud";
+// Единственият деплоймент, в който този sync има право да пише. Умишлено е
+// константа в кода, а не стойност, прочетена от средата: CASEKING_CONVEX_URL
+// идва от GitHub secrets и може да бъде сменен без review, така че реалното
+// решение коя база е позволена се взема от проверката по-долу, не от secret-а.
+// Сменена е от elated-butterfly-122 на 2026-10-01, когато магазинът се мести
+// върху dev деплоймента.
+const OWNED_CASEKING_CONVEX_URL = "https://aware-toucan-771.eu-west-1.convex.cloud";
 const CASEKING_CONVEX_URL = process.env.CASEKING_CONVEX_URL;
 const CASEKING_SYNC_SECRET = process.env.CASEKING_SYNC_SECRET;
 

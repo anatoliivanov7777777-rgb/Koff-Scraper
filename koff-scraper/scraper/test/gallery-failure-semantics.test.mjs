@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 
 // Importing this module must NOT trigger a real sync (main() is guarded -
 // see the bottom of sync-caseking.mjs). Pure function only, no network.
-process.env.CASEKING_CONVEX_URL = "https://elated-butterfly-122.eu-west-1.convex.cloud";
+process.env.CASEKING_CONVEX_URL = "https://aware-toucan-771.eu-west-1.convex.cloud";
 
 const { buildCaseKingProducts } = await import("../sync-caseking.mjs");
 const { fetchGalleriesBounded } = await import("../product-gallery.mjs");

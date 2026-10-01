@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 // only run when the file is executed directly). This file only checks
 // that exporting resolveCategorySlug (for the Phase E read-only analysis
 // tool) did not change its behavior in any way - no logic was modified.
-process.env.CASEKING_CONVEX_URL = "https://elated-butterfly-122.eu-west-1.convex.cloud";
+process.env.CASEKING_CONVEX_URL = "https://aware-toucan-771.eu-west-1.convex.cloud";
 
 const { resolveCategorySlug } = await import("../sync-caseking.mjs");
 

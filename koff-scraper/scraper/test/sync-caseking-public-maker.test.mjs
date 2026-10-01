@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 // only run when the file is executed directly). This file only exercises
 // the pure product-building function; it makes no network calls and reads
 // no live Koff/CaseKing data.
-process.env.CASEKING_CONVEX_URL = "https://elated-butterfly-122.eu-west-1.convex.cloud";
+process.env.CASEKING_CONVEX_URL = "https://aware-toucan-771.eu-west-1.convex.cloud";
 
 const { buildCaseKingProducts } = await import("../sync-caseking.mjs");
 
