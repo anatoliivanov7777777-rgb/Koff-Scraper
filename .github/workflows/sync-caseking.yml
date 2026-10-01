@@ -26,6 +26,15 @@ on:
           - 'false'
           - 'true'
 
+      stock_zero:
+        description: 'Продукти извън feed-а: dry = само брои, apply = нулира наличността'
+        required: false
+        default: 'dry'
+        type: choice
+        options:
+          - 'dry'
+          - 'apply'
+
   schedule:
     - cron: '0 3 * * 0'
 
@@ -67,4 +76,7 @@ jobs:
           LIMIT: ${{ github.event.inputs.limit || 'all' }}
           CLEANUP: 'false'
           FORCE: ${{ github.event.inputs.force || 'false' }}
+          # Scheduled runs carry no inputs, so they always stay on 'dry' -
+          # applying the stock-zero pass is a deliberate manual choice.
+          STOCK_ZERO_MODE: ${{ github.event.inputs.stock_zero || 'dry' }}
         run: node sync-caseking.mjs
