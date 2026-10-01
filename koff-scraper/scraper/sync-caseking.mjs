@@ -620,9 +620,13 @@ async function reconcileFeedStock(convex, caseKingProducts, runMeta) {
     if (page.isDone) break;
   }
   const { toZero, missingSourceKey, alreadyZero } = feedStockChanges(synced, feedKeys);
+  // Редовете, които чакат човек в "За преглед" - за отчета на run-а (те и без
+  // това не се показват в сайта, докато не бъдат именувани).
+  const pendingReview = synced.filter((p) => p.reviewStatus === "pending").length;
   console.log(
     `  Синхронизирани редове: ${synced.length}; извън feed-а за нулиране: ${toZero.length}; ` +
-      `вече с 0: ${alreadyZero}; без sourceKey (не се пипат): ${missingSourceKey.length}`
+      `вече с 0: ${alreadyZero}; без sourceKey (не се пипат): ${missingSourceKey.length}; ` +
+      `в "За преглед": ${pendingReview}`
   );
 
   const dryRun = STOCK_ZERO_MODE !== "apply";
@@ -665,6 +669,7 @@ async function reconcileFeedStock(convex, caseKingProducts, runMeta) {
     wouldZero,
     alreadyZero,
     missingSourceKey: missingSourceKey.length,
+    pendingReview,
     mode: STOCK_ZERO_MODE,
     skipped: false,
   };
