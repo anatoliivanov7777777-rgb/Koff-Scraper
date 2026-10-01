@@ -36,7 +36,10 @@ on:
           - 'apply'
 
   schedule:
-    - cron: '0 3 * * 0'
+    # Daily at 01:00 UTC (owner's instruction, 2026-10-01; was weekly, Sunday
+    # 03:00 UTC). One full run - scrape, sync and the stock-zero pass - takes
+    # about 8-11 minutes.
+    - cron: '0 1 * * *'
 
 concurrency:
   group: sync-caseking
@@ -90,7 +93,9 @@ jobs:
           LIMIT: ${{ github.event.inputs.limit || 'all' }}
           CLEANUP: 'false'
           FORCE: ${{ github.event.inputs.force || 'false' }}
-          # Scheduled runs carry no inputs, so they always stay on 'dry' -
-          # applying the stock-zero pass is a deliberate manual choice.
-          STOCK_ZERO_MODE: ${{ github.event.inputs.stock_zero || 'dry' }}
+          # Scheduled runs carry no inputs: they take the whole feed ('all'
+          # above) and APPLY the stock-zero pass - that is the daily job. A
+          # manual dispatch keeps 'dry' as its default, so nothing applies
+          # without someone choosing it.
+          STOCK_ZERO_MODE: ${{ github.event_name == 'schedule' && 'apply' || github.event.inputs.stock_zero || 'dry' }}
         run: node sync-caseking.mjs
