@@ -59,6 +59,20 @@ jobs:
         with:
           node-version: "20"
 
+      # The dev sync has its OWN secret now (CASEKING_SYNC_DEV_SECRET), separate
+      # from the shared CASEKING_SYNC_SECRET that the fulfillment workflows
+      # still carry for the old production deployment. Check it before the long
+      # scrape: an empty secret can only end in a failed sync, and this fails in
+      # seconds with the reason instead of after ~10 minutes of scraping.
+      - name: Check the dev sync secret is configured
+        env:
+          CASEKING_SYNC_SECRET: ${{ secrets.CASEKING_SYNC_DEV_SECRET }}
+        run: |
+          if [ -z "$CASEKING_SYNC_SECRET" ]; then
+            echo "::error::CASEKING_SYNC_DEV_SECRET is empty or missing. Create this repository secret with the dev deployment's CASEKING_SYNC_SECRET value before running the sync — the shared CASEKING_SYNC_SECRET is no longer read here (it stays with the fulfillment workflows for the old production deployment)."
+            exit 1
+          fi
+
       - name: Install scraper dependencies
         working-directory: koff-scraper/scraper
         run: npm install
@@ -82,13 +96,16 @@ jobs:
       - name: Sync to CaseKing Convex
         working-directory: koff-scraper/scraper
         env:
-          # Its OWN secret, deliberately not the shared CASEKING_CONVEX_URL:
-          # that one is the fulfillment workers' input, and they hard-pin the
-          # old production deployment (elated-butterfly-122) because the live
-          # shop's orders are still fulfilled from there. The env var NAME
-          # stays as the script expects it; only the source differs.
+          # Its OWN URL and secret, deliberately not the shared
+          # CASEKING_CONVEX_URL / CASEKING_SYNC_SECRET: those are the
+          # fulfillment workers' input, and they hard-pin the old production
+          # deployment (elated-butterfly-122) because the live shop's orders
+          # are still fulfilled from there. The dev sync targets
+          # aware-toucan-771 (pinned in sync-caseking.mjs) and authenticates
+          # with CASEKING_SYNC_DEV_SECRET. The env var NAME stays as the script
+          # expects it; only the source differs.
           CASEKING_CONVEX_URL: ${{ secrets.CASEKING_SYNC_CONVEX_URL }}
-          CASEKING_SYNC_SECRET: ${{ secrets.CASEKING_SYNC_SECRET }}
+          CASEKING_SYNC_SECRET: ${{ secrets.CASEKING_SYNC_DEV_SECRET }}
           LIVE: ${{ github.event.inputs.live || 'true' }}
           LIMIT: ${{ github.event.inputs.limit || 'all' }}
           CLEANUP: 'false'
