@@ -235,9 +235,14 @@ test("CaseKing worker client pins production URL and sends syncSecret on its nar
   assert.equal(calls.length, 6);
   assert.ok(calls.every(([, operation, args]) =>
     operation.startsWith("koffFulfillments:") && args.syncSecret === syncSecret));
-  assert.throws(() => createCaseKingFulfillmentClient({
-    url: "https://aware-toucan-771.eu-west-1.convex.cloud",
-    syncSecret,
-    convexClient,
-  }), /owned production deployment/);
+  // The live shop moved to aware-toucan-771 (2026-10-06); the old
+  // production deployment and any other URL are refused.
+  assert.equal(OWNED_CASEKING_CONVEX_URL, "https://aware-toucan-771.eu-west-1.convex.cloud");
+  for (const url of [
+    "https://elated-butterfly-122.eu-west-1.convex.cloud",
+    "https://trustworthy-possum-230.eu-west-1.convex.cloud",
+    "https://example.convex.cloud",
+  ]) {
+    assert.throws(() => createCaseKingFulfillmentClient({ url, syncSecret, convexClient }), /owned production deployment/);
+  }
 });

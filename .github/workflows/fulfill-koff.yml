@@ -38,7 +38,7 @@ jobs:
         env:
           KOFF_EMAIL: ${{ secrets.KOFF_EMAIL }}
           KOFF_PASSWORD: ${{ secrets.KOFF_PASSWORD }}
-          CASEKING_CONVEX_URL: ${{ secrets.CASEKING_CONVEX_URL }}
-          CASEKING_SYNC_SECRET: ${{ secrets.CASEKING_SYNC_SECRET }}
+          CASEKING_CONVEX_URL: ${{ secrets.CASEKING_SYNC_CONVEX_URL }}
+          CASEKING_SYNC_SECRET: ${{ secrets.CASEKING_SYNC_DEV_SECRET }}
           KOFF_CART_LIVE: 'true'
         run: node koff-fulfillment-worker.mjs

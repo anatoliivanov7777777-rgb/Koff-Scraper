@@ -2,8 +2,11 @@ import { ConvexHttpClient } from "convex/browser";
 import { pathToFileURL } from "node:url";
 import { createKoffClient, findCartProduct } from "./koff-client.mjs";
 
+// The live shop's database since the launch of the new case-king.bg
+// (2026-10-06): orders are placed there and their Koff lines wait there. The
+// old production deployment (elated-butterfly-122) receives no orders any more.
 export const OWNED_CASEKING_CONVEX_URL =
-  "https://elated-butterfly-122.eu-west-1.convex.cloud";
+  "https://aware-toucan-771.eu-west-1.convex.cloud";
 
 const FULFILLMENT_OPERATIONS = new Set([
   "koffFulfillments:claimNext",
