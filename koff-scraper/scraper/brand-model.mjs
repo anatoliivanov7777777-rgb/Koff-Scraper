@@ -209,6 +209,32 @@ function canonicalizeSamsungWatchModel(model) {
   return model.replace(/\bWatch4\b/gi, "Watch 4");
 }
 
+// Koff abbreviates the family name after the first device of a slash list
+// ("Moto G77 / G67", "Redmi Note 15 4G / Note 15 Pro", "Redmi A1 / A1 Plus"),
+// and some titles name the device without it at all. Each spelling became its
+// own model row, so one phone was split in two in the shop's model picker
+// ("G77" next to "Moto G77"). One canonical spelling per family, chosen by
+// what the live model list already uses for the majority of its rows:
+//   MOTO   G/E series -> "Moto G77", "Moto E30"; Edge -> "Edge 60" (no "Moto")
+//   Xiaomi Redmi Note / Redmi A / Poco series -> "Redmi Note 15 Pro", "Redmi A1 Plus", "Poco X7 Pro"
+// Bare numbers ("13", "15 Pro") are left alone: for Xiaomi they are the
+// flagship line (Xiaomi 13), a different phone from the Redmi 13.
+export function canonicalizeFamilyModel(brand, model) {
+  const m = String(model || "").trim();
+  if (brand === "MOTO") {
+    if (/^[GE]\d/i.test(m)) return `Moto ${m}`;
+    const edge = m.match(/^Moto\s+(Edge\b.*)$/i);
+    if (edge) return edge[1];
+  }
+  if (brand === "Xiaomi") {
+    if (/^Note\s+\d/i.test(m)) return `Redmi ${m}`;
+    if (/^A\d+(\s+Plus)?(\s|$)/i.test(m)) return `Redmi ${m}`;
+    // "Poco X7 / X7 Pro": every Poco row in the live list carries "Poco".
+    if (/^[XFMC]\d/i.test(m)) return `Poco ${m}`;
+  }
+  return m;
+}
+
 function processSlashGroup(text) {
   const parts = text
     .split("/")
@@ -248,9 +274,13 @@ function processSlashGroup(text) {
       let modelForThisPart = normalizeSuffixes(rawModel);
       if (finalBrand === "Samsung Watch") modelForThisPart = canonicalizeSamsungWatchModel(modelForThisPart);
       currentFullModel = modelForThisPart;
+      const sourceModelForThisPart = modelForThisPart;
+      modelForThisPart = canonicalizeFamilyModel(finalBrand, modelForThisPart);
+      currentFullModel = modelForThisPart;
       results.push({
         brand: finalBrand,
         model: modelForThisPart,
+        sourceModel: sourceModelForThisPart, // see the note at the second push
         isWatch: currentIsWatch,
       });
       continue;
@@ -319,6 +349,8 @@ function processSlashGroup(text) {
     const finalBrand = currentIsWatch ? remapWatchBrand(currentBrand) : currentBrand;
     let finalModel = normalizeSuffixes(modelText);
     if (finalBrand === "Samsung Watch") finalModel = canonicalizeSamsungWatchModel(finalModel);
+    const sourceModel = finalModel;
+    finalModel = canonicalizeFamilyModel(finalBrand, finalModel);
     currentFullModel = finalModel;
     if (currentIsWatch && /^Ultra$/i.test(finalModel)) {
       // При "Apple Watch ... / Ultra / 2 / 3 / 4" bare numeric частите
@@ -329,6 +361,10 @@ function processSlashGroup(text) {
     results.push({
       brand: finalBrand,
       model: finalModel,
+      // The spelling before canonicalizeFamilyModel. sourceKey is built from
+      // it, so a product keeps the identity it was created with: renaming
+      // "G77" to "Moto G77" must never turn into a new product.
+      sourceModel,
       isWatch: currentIsWatch,
     });
   }

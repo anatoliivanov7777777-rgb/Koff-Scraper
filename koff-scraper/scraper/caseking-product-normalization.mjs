@@ -419,7 +419,11 @@ export function buildCaseKingProducts(raw, categorySlug) {
       // never from makerResolution's public value.
       brand: bm.brand,
       model: bm.model,
-      sourceKey: `${SOURCE_TAG}:${raw.sourceId}:${bm.isWatch ? WATCH_CATEGORY_SLUG : categorySlug}:${bm.brand}:${bm.model}`,
+      // bm.sourceModel: the spelling before the family canonicalization
+      // (brand-model.mjs canonicalizeFamilyModel), so an existing product's
+      // key - and so the product itself - stays the same when only the
+      // displayed model name is corrected.
+      sourceKey: `${SOURCE_TAG}:${raw.sourceId}:${bm.isWatch ? WATCH_CATEGORY_SLUG : categorySlug}:${bm.brand}:${bm.sourceModel ?? bm.model}`,
       ...(makerResolution.publicMaker !== undefined ? { publicMaker: makerResolution.publicMaker } : {}),
       // не се праща към Convex - ползва се само локално, за да знаем какъв
       // type да зададем на марката/модела при създаването им

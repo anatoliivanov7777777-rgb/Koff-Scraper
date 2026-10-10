@@ -160,7 +160,7 @@ test("5g. Watch4 canonicalization does not corrupt an unrelated larger number (w
 test("6a. 4G/5G phone variants are never collapsed into one model", () => {
   assert.deepEqual(
     identities("Moto G31 / G31 4G"),
-    ["MOTO:Moto G31", "MOTO:G31 4G"],
+    ["MOTO:Moto G31", "MOTO:Moto G31 4G"],
   );
 });
 
