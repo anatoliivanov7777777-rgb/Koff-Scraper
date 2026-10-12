@@ -152,6 +152,52 @@ const EXTRA_CATEGORY_MAP = {
 const HYDROGEL_RE = /hydrogel|хидрогел/i;
 const HYDROGEL_SLUG = "hydrogel_film";
 
+// Category audit (owner, 2026-10-12): some Koff categories hold products that
+// belong on another CaseKing shelf - watch screen protectors among phone
+// protectors, phone cases among watch accessories, Guess phone cases with a
+// strap among straps, MagSafe wallets among desk stands, AirPods cases among
+// phone cases. This decides the STORED category from the supplier's own
+// title. It never feeds sourceKey: a product's key keeps the mapped slug, so
+// an existing row is still found by the sync (which never re-asserts the
+// category of an existing row anyway) and nothing is duplicated.
+const WATCH_DEVICE_RE = /\b(watch|garmin|fenix|forerunner|instinct|epix|venu|vivoactive|amazfit|fitbit)\b|часовник/i;
+const ACTION_CAM_RE = /\b(gopro|insta360|dji)\b/i;
+const CAR_SCREEN_RE = /\btesla\b/i;
+const CLEANING_RE = /\b(cleaning|carewipe|wipes?|microfib(er|re))\b|почистващ|кърпа за почистване/i;
+const EARBUDS_RE = /\b(airpods|galaxy buds|earbuds)\b/i;
+const PHONE_DEVICE_RE = /\b(iphone|galaxy [sazmn]\d|galaxy z|pixel \d|redmi|xiaomi \d|honor \d|oppo|realme|motorola|moto [geg])/i;
+const PHONE_CASE_CODE_RE = /\b(GUH[CM]P|KLH[CM]P)|\bhard ?case\b|\bcase\b/i;
+const WALLET_RE = /\b(wallet|card ?holder)\b|портфейл/i;
+
+export function refineCategorySlug(categorySlug, rawProduct) {
+  const title = norm(rawProduct && rawProduct.name);
+  if (!categorySlug || !title) return categorySlug;
+  switch (categorySlug) {
+    case "protektori-za-ekran":
+      if (CLEANING_RE.test(title) && !/glass|protector|tempered|стъкл|протектор/i.test(title)) return "drugi";
+      if (WATCH_DEVICE_RE.test(title)) return WATCH_CATEGORY_SLUG;
+      if (ACTION_CAM_RE.test(title)) return "selfi-stikove";
+      if (CAR_SCREEN_RE.test(title)) return "aksesoari-za-avtomobili";
+      return categorySlug;
+    case WATCH_CATEGORY_SLUG:
+      if (WATCH_DEVICE_RE.test(title)) return categorySlug;
+      if (EARBUDS_RE.test(title)) return "headphones";
+      if (PHONE_DEVICE_RE.test(title)) return "keysove-i-kalufi";
+      return categorySlug;
+    case "keysove-i-kalufi":
+      if (EARBUDS_RE.test(title) && !PHONE_DEVICE_RE.test(title)) return "headphones";
+      return categorySlug;
+    case "popsoket-i-vrazki":
+      if (/^(guess|karl lagerfeld)\b/i.test(title) && PHONE_CASE_CODE_RE.test(title)) return "keysove-i-kalufi";
+      return categorySlug;
+    case "postavki-za-byuro":
+      if (WALLET_RE.test(title)) return "popsoket-i-vrazki";
+      return categorySlug;
+    default:
+      return categorySlug;
+  }
+}
+
 // Exported (export-only change, no logic modified) so the Phase E
 // read-only analysis tool can reuse the exact real category-resolution
 // behavior instead of duplicating it - see
@@ -332,7 +378,7 @@ export function buildCaseKingProducts(raw, categorySlug) {
     return [
       {
         ...commonFields,
-        category: categorySlug,
+        category: refineCategorySlug(categorySlug, raw),
         name: nameResult.name,
         brand: makerResolution.rebranded ? "CaseKing" : (accBrand || "Всички марки"),
         model: "Всички модели",
@@ -369,7 +415,7 @@ export function buildCaseKingProducts(raw, categorySlug) {
     return [
       {
         ...commonFields,
-        category: categorySlug,
+        category: refineCategorySlug(categorySlug, raw),
         name: nameResult.name,
         brand: "Всички марки",
         model: "Всички модели",
@@ -411,7 +457,7 @@ export function buildCaseKingProducts(raw, categorySlug) {
     });
     return {
       ...commonFields,
-      category: bm.isWatch ? WATCH_CATEGORY_SLUG : categorySlug,
+      category: refineCategorySlug(bm.isWatch ? WATCH_CATEGORY_SLUG : categorySlug, raw),
       name: nameResult.name,
       // brand/model stay the COMPATIBLE-DEVICE identity (e.g. Apple/iPhone
       // 16 Pro Max) - unaffected by any manufacturer rebrand, exactly as
