@@ -11,6 +11,9 @@
 // markup винаги остава в същите абсолютни min/max граници. При точно равна
 // дистанция се избира по-високата .99 цена.
 //
+// Минимална B2C цена (решение на собственика, 2026-10-12): нито един продукт
+// не се продава на дребно под 4.99€, независимо от доставчика. B2B няма под.
+//
 // Продукти в средния диапазон (базова цена между ~1.33€ и ~17.78€ за B2B,
 // между ~2.5€ и ~15€ за B2C) си остават с чиста процентна надценка преди
 // финалното .99 закръгляне.
@@ -29,6 +32,7 @@ const B2B_MAX_MARKUP = 8;
 const B2C_PERCENT = 0.8;
 const B2C_MIN_MARKUP = 2;
 const B2C_MAX_MARKUP = 12;
+export const B2C_MIN_PRICE = 4.99;
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -69,10 +73,13 @@ export function calcB2BPrice(basePrice) {
 
 export function calcB2CPrice(basePrice) {
   const markup = clamp(basePrice * B2C_PERCENT, B2C_MIN_MARKUP, B2C_MAX_MARKUP);
-  return roundToNearest99WithinMarkup(
+  const price = roundToNearest99WithinMarkup(
     basePrice,
     basePrice + markup,
     B2C_MIN_MARKUP,
     B2C_MAX_MARKUP
   );
+  // The floor only ever raises a price, so the markup stays at or above the
+  // €2 minimum; it never lowers anything the rules above produced.
+  return Math.max(price, B2C_MIN_PRICE);
 }
