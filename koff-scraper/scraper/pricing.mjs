@@ -12,7 +12,8 @@
 // дистанция се избира по-високата .99 цена.
 //
 // Минимална B2C цена (решение на собственика, 2026-10-12): нито един продукт
-// не се продава на дребно под 4.99€, независимо от доставчика. B2B няма под.
+// не се продава на дребно под 4.99€, независимо от доставчика.
+// Минимална B2B цена (решение на собственика, 2026-10-13): 1.99€.
 //
 // Продукти в средния диапазон (базова цена между ~1.33€ и ~17.78€ за B2B,
 // между ~2.5€ и ~15€ за B2C) си остават с чиста процентна надценка преди
@@ -28,6 +29,7 @@ export function addVat(basePrice) {
 const B2B_PERCENT = 0.45;
 const B2B_MIN_MARKUP = 0.6;
 const B2B_MAX_MARKUP = 8;
+export const B2B_MIN_PRICE = 1.99;
 
 const B2C_PERCENT = 0.8;
 const B2C_MIN_MARKUP = 2;
@@ -63,12 +65,13 @@ function roundToNearest99WithinMarkup(basePrice, targetPrice, minMarkup, maxMark
 
 export function calcB2BPrice(basePrice) {
   const markup = clamp(basePrice * B2B_PERCENT, B2B_MIN_MARKUP, B2B_MAX_MARKUP);
-  return roundToNearest99WithinMarkup(
+  const price = roundToNearest99WithinMarkup(
     basePrice,
     basePrice + markup,
     B2B_MIN_MARKUP,
     B2B_MAX_MARKUP
   );
+  return Math.max(price, B2B_MIN_PRICE);
 }
 
 export function calcB2CPrice(basePrice) {

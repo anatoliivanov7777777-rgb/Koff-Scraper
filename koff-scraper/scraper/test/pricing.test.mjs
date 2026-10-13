@@ -45,11 +45,19 @@ test("VAT is applied before B2B/B2C markup and .99 rounding", () => {
   assert.equal(calcB2CPrice(gross), 21.99); // 12 + 80% = 21.60 -> nearest valid .99
 });
 
-test("B2C never goes below the 4.99 retail floor; B2B has no floor", () => {
+test("B2C never goes below the 4.99 retail floor", () => {
   for (const base of [0.01, 0.5, 1, 1.5, 2, 2.5, 2.77, 2.99]) {
     assert.ok(calcB2CPrice(base) >= 4.99, `base ${base}`);
   }
   assert.equal(calcB2CPrice(1.5), 4.99);   // was 3.99
   assert.equal(calcB2CPrice(3), 5.99);     // above the floor: unchanged rules
-  assert.equal(calcB2BPrice(0.5), 1.99);   // B2B untouched
+  assert.equal(calcB2BPrice(0.5), 1.99);
+});
+
+test("B2B never goes below the 1.99 floor (owner, 2026-10-13)", () => {
+  for (const base of [0.01, 0.1, 0.25, 0.39, 0.5, 1]) {
+    assert.ok(calcB2BPrice(base) >= 1.99, `base ${base}`);
+  }
+  assert.equal(calcB2BPrice(0.1), 1.99);   // was 0.99
+  assert.equal(calcB2BPrice(5), 6.99);     // above the floor: unchanged rules
 });
