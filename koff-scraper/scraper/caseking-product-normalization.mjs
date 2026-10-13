@@ -167,6 +167,9 @@ const CLEANING_RE = /\b(cleaning|carewipe|wipes?|microfib(er|re))\b|почист
 const EARBUDS_RE = /\b(airpods|galaxy buds|earbuds)\b/i;
 const PHONE_DEVICE_RE = /\b(iphone|galaxy [sazmn]\d|galaxy z|pixel \d|redmi|xiaomi \d|honor \d|oppo|realme|motorola|moto [geg])/i;
 const PHONE_CASE_CODE_RE = /\b(GUH[CM]P|KLH[CM]P)|\bhard ?case\b|\bcase\b/i;
+const EARBUD_CASE_SLUG = "kalafi-za-slushalki";
+const EARBUD_CASE_RE = /\b(case|cover|silicone|hardcase)\b|калъф|кейс/i;
+const EARPHONES_WITH_CASE_RE = /\b(earbuds?|headphones?|headset|tws|bluetooth v?\d|anc|enc)\b|слушалки с/i;
 const WALLET_RE = /\b(wallet|card ?holder)\b|портфейл/i;
 
 export function refineCategorySlug(categorySlug, rawProduct) {
@@ -181,11 +184,16 @@ export function refineCategorySlug(categorySlug, rawProduct) {
       return categorySlug;
     case WATCH_CATEGORY_SLUG:
       if (WATCH_DEVICE_RE.test(title)) return categorySlug;
-      if (EARBUDS_RE.test(title)) return "headphones";
+      if (EARBUDS_RE.test(title)) return EARBUD_CASE_SLUG;
       if (PHONE_DEVICE_RE.test(title)) return "keysove-i-kalufi";
       return categorySlug;
     case "keysove-i-kalufi":
-      if (EARBUDS_RE.test(title) && !PHONE_DEVICE_RE.test(title)) return "headphones";
+      if (EARBUDS_RE.test(title) && !PHONE_DEVICE_RE.test(title)) return EARBUD_CASE_SLUG;
+      return categorySlug;
+    case "headphones":
+      // A case FOR earphones, not the earphones themselves (2026-10-13: the
+      // shop has its own "Калъфи за слушалки" shelf since the PhonePlay import).
+      if (EARBUD_CASE_RE.test(title) && !EARPHONES_WITH_CASE_RE.test(title)) return EARBUD_CASE_SLUG;
       return categorySlug;
     case "popsoket-i-vrazki":
       if (/^(guess|karl lagerfeld)\b/i.test(title) && PHONE_CASE_CODE_RE.test(title)) return "keysove-i-kalufi";
