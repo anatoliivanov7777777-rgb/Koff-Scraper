@@ -27,6 +27,8 @@ const cases = [
   ["headphones", "UNIQ - Lino Hybrid Liquid Silicone Case - AirPods 4 - Green", "kalafi-za-slushalki"],
   ["headphones", "Guess - Wireless Earbuds Script Metal Logo (GUTWSX45PGSH) - Bluetooth V5.4, TWS, with Case", "headphones"],
   ["headphones", "Havit - Wireless Headphones H655BT Pro - ANC - Black", "headphones"],
+  ["headphones", "CaseKing - AirVibe Ear Tips (S/M/L) - Premium Silicone - Black", "headphones"],
+  ["headphones", "Acefast - Wired Earphones USB-C (L1) - Silicone - White", "headphones"],
   ["kabeli-za-zaryadane", "Baseus - Cable USB-C to USB-C 100W - Black", "kabeli-za-zaryadane"],
 ];
 

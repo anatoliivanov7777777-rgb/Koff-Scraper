@@ -169,7 +169,7 @@ const PHONE_DEVICE_RE = /\b(iphone|galaxy [sazmn]\d|galaxy z|pixel \d|redmi|xiao
 const PHONE_CASE_CODE_RE = /\b(GUH[CM]P|KLH[CM]P)|\bhard ?case\b|\bcase\b/i;
 const EARBUD_CASE_SLUG = "kalafi-za-slushalki";
 const EARBUD_CASE_RE = /\b(case|cover|silicone|hardcase)\b|калъф|кейс/i;
-const EARPHONES_WITH_CASE_RE = /\b(earbuds?|headphones?|headset|tws|bluetooth v?\d|anc|enc)\b|слушалки с/i;
+const EARPHONES_WITH_CASE_RE = /\b(earbuds?|headphones?|headset|tws|bluetooth v?\d|anc|enc|ear ?tips?|wired|in-ear)\b|слушалки с|накрайници|кабелни слушалки/i;
 const WALLET_RE = /\b(wallet|card ?holder)\b|портфейл/i;
 
 export function refineCategorySlug(categorySlug, rawProduct) {
