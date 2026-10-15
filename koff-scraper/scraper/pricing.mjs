@@ -1,88 +1,93 @@
-// Ценова логика: базово 45% надценка за B2B и 80% за B2C, НО ограничена
-// между минимална и максимална абсолютна надценка в евро - за да не се
-// получават нито твърде малки надценки при евтини продукти, нито твърде
-// големи (непродаваеми) надценки при скъпи продукти.
+// ============================================================================
+// CASEKING PRICING v2 (PM decision, 2026-10-15)
+// ----------------------------------------------------------------------------
+// One rule for every supplier we price ourselves (Koff, Homescreen). The same
+// numbers are ported 1:1 to convex/homescreenPricing.ts; the test vectors in
+// test/pricing.test.mjs are the contract both copies must pass.
 //
-// B2B: 45% надценка, но между 0.60€ и 8€
-// B2C: 80% надценка, но между 2€ и 12€
+// Owner's facts this is built on (2026-10-14/15):
+//   - supplier orders go out twice a week (Mon, Thu), so a supplier's delivery
+//     (Koff 10 €, PhonePlay 7 €, Homescreen 7 €) is shared by that batch;
+//   - the shop pays ~3.5-4 € for an Econt parcel when delivery is free
+//     (from 39.99 € to an office), otherwise the customer pays it;
+//   - wanted: 8-10 € profit per order, cheap items dearer, nothing under 9.99 €.
 //
-// След изчисляване на цената тя се закръгля до най-близката валидна цена,
-// завършваща на .99. Закръглянето може да е нагоре или надолу, но крайният
-// markup винаги остава в същите абсолютни min/max граници. При точно равна
-// дистанция се избира по-високата .99 цена.
+// base = supplier net price x 1.23 (VAT and a small buffer, owner 2026-10-15)
 //
-// Минимална B2C цена (решение на собственика, 2026-10-12): нито един продукт
-// не се продава на дребно под 4.99€, независимо от доставчика.
-// Минимална B2B цена (решение на собственика, 2026-10-13): 1.99€.
+// B2C
+//   1. target profit by base:  base <= 20 €  -> max(7 €, 60% of base)
+//                              20-40 €       -> 12 € rising to 14 €
+//                              above 40 €    -> 30% of base, 14-30 €
+//      Smooth on purpose: a dearer product never ends up cheaper than a
+//      cheaper one (the old 80%/55% step did that around base 8 €).
+//   2. hard floor: price >= 9.99 € and price >= base + 6 €. Never below.
+//   3. shelf price: the lowest point of the price ladder that is at least
+//      max(floor, target - 1 €). The ladder is 9.99, then x2.99 / x4.99 /
+//      x7.99 / x9.99 up to 99.99, then every 5 €. Rounding only goes up from
+//      the floor, so it never eats into the guaranteed profit.
 //
-// Продукти в средния диапазон (базова цена между ~1.33€ и ~17.78€ за B2B,
-// между ~2.5€ и ~15€ за B2C) си остават с чиста процентна надценка преди
-// финалното .99 закръгляне.
+// B2B (approved trade accounts only - the shop must not show these prices to
+// a self-declared B2B account; see the backend task of 2026-10-15)
+//   base + 25% of base, at least 1.50 € and at most 9 €, rounded UP to .99,
+//   never under 1.99 €. Pure cost-plus; never above the B2C price.
+// ============================================================================
 
-export const VAT_RATE = 0.20;
+export const VAT_RATE = 0.23;
 export const VAT_MULTIPLIER = 1 + VAT_RATE;
 
 export function addVat(basePrice) {
   return basePrice * VAT_MULTIPLIER;
 }
 
-const B2B_PERCENT = 0.45;
-const B2B_MIN_MARKUP = 0.6;
-const B2B_MAX_MARKUP = 8;
+export const B2C_MIN_PRICE = 9.99;
+export const B2C_HARD_MIN_MARGIN = 6;
+const B2C_LADDER_SHAVE = 1;
+
+const B2B_PERCENT = 0.25;
+const B2B_MIN_MARKUP = 1.5;
+const B2B_MAX_MARKUP = 9;
 export const B2B_MIN_PRICE = 1.99;
 
-const B2C_PERCENT = 0.8;
-const B2C_MIN_MARKUP = 2;
-const B2C_MAX_MARKUP = 12;
-export const B2C_MIN_PRICE = 4.99;
+const cents = (value) => Math.round(value * 100) / 100;
 
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
+/** The profit the shop aims for on one product, in euro, by its landed cost. */
+export function targetMargin(base) {
+  if (base <= 20) return Math.max(7, 0.6 * base);
+  if (base <= 40) return 12 + 0.1 * (base - 20);
+  return Math.min(Math.max(14, 0.3 * base), 30);
 }
 
-function roundToNearest99WithinMarkup(basePrice, targetPrice, minMarkup, maxMarkup) {
-  const minPriceCents = Math.ceil((basePrice + minMarkup) * 100 - 1e-8);
-  const maxPriceCents = Math.floor((basePrice + maxMarkup) * 100 + 1e-8);
-
-  // Every allowed CaseKing markup interval is wider than €1, so at least one
-  // .99 candidate always exists. Calculate the integer euro prefixes whose
-  // corresponding prices (prefix + .99) are still inside the allowed range.
-  const minPrefix = Math.ceil((minPriceCents - 99) / 100);
-  const maxPrefix = Math.floor((maxPriceCents - 99) / 100);
-
-  if (minPrefix > maxPrefix) {
-    throw new Error("No valid .99 price inside the configured markup range");
+function buildLadder() {
+  const points = [9.99];
+  for (let tens = 10; tens < 100; tens += 10) {
+    for (const end of [2.99, 4.99, 7.99, 9.99]) points.push(cents(tens + end));
   }
-
-  // Nearest .99 to the unrounded target. Math.round resolves an exact midpoint
-  // upward, which is the intended tie-breaker.
-  const targetCents = targetPrice * 100;
-  const nearestPrefix = Math.round((targetCents - 99) / 100);
-  const validPrefix = clamp(nearestPrefix, minPrefix, maxPrefix);
-
-  return (validPrefix * 100 + 99) / 100;
+  return points;
 }
 
-export function calcB2BPrice(basePrice) {
-  const markup = clamp(basePrice * B2B_PERCENT, B2B_MIN_MARKUP, B2B_MAX_MARKUP);
-  const price = roundToNearest99WithinMarkup(
-    basePrice,
-    basePrice + markup,
-    B2B_MIN_MARKUP,
-    B2B_MAX_MARKUP
-  );
-  return Math.max(price, B2B_MIN_PRICE);
+export const B2C_PRICE_LADDER = Object.freeze(buildLadder());
+
+/** The lowest allowed shelf price at or above `need`. */
+function shelfPriceAtLeast(need) {
+  for (const point of B2C_PRICE_LADDER) {
+    if (point >= need - 1e-9) return point;
+  }
+  // Above 99.99: every 5 € (x4.99 / x9.99).
+  const step = Math.ceil((need + 0.01 - 1e-9) / 5) * 5;
+  return cents(step - 0.01);
 }
 
 export function calcB2CPrice(basePrice) {
-  const markup = clamp(basePrice * B2C_PERCENT, B2C_MIN_MARKUP, B2C_MAX_MARKUP);
-  const price = roundToNearest99WithinMarkup(
-    basePrice,
-    basePrice + markup,
-    B2C_MIN_MARKUP,
-    B2C_MAX_MARKUP
-  );
-  // The floor only ever raises a price, so the markup stays at or above the
-  // €2 minimum; it never lowers anything the rules above produced.
-  return Math.max(price, B2C_MIN_PRICE);
+  const target = basePrice + targetMargin(basePrice);
+  const floor = Math.max(B2C_MIN_PRICE, basePrice + B2C_HARD_MIN_MARGIN);
+  return shelfPriceAtLeast(Math.max(floor, target - B2C_LADDER_SHAVE));
+}
+
+export function calcB2BPrice(basePrice) {
+  const markup = Math.min(Math.max(basePrice * B2B_PERCENT, B2B_MIN_MARKUP), B2B_MAX_MARKUP);
+  const raw = basePrice + markup;
+  // Up to the next .99 (a price already on .99 stays).
+  const rounded = cents(Math.ceil(cents(raw) - 0.99 - 1e-9) + 0.99);
+  const price = Math.max(rounded, B2B_MIN_PRICE);
+  return Math.min(price, calcB2CPrice(basePrice));
 }
