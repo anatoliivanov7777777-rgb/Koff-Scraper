@@ -83,7 +83,7 @@ test("client uses the proven authenticated absolute-quantity cart contract with 
   assert.equal(write.options.headers.get("Authorization"), `Bearer ${secrets.token}`);
   assert.equal(write.options.headers.get("X-CSRF-Token"), secrets.cookieCsrf);
   assert.equal(write.options.headers.get("X-Requested-With"), "XMLHttpRequest");
-  assert.equal(write.options.headers.get("X-App-Version"), "0.9.78");
+  assert.equal(write.options.headers.get("X-App-Version"), "0.9.82");
   assert.match(write.options.headers.get("Cookie"), /_csrf=/);
 
   const logged = logs.join(" ");
@@ -108,4 +108,42 @@ test("live guard prevents the cart POST before any fake HTTP request", async () 
     (error) => error.koffCartWriteAttempted === false,
   );
   assert.equal(fetchCalls, 0);
+});
+
+test("login sends the app version Koff's own page uses (0.9.78 was refused with HTTP 400)", async () => {
+  const calls = [];
+  const queue = [
+    response(`<meta name="csrf-token" content="c"><script type="module" src="/app/0.9.99/js/index.js"></script>`, { contentType: "text/html" }),
+    response({ success: true }),
+  ];
+  const client = createKoffClient({
+    email: "fixture@example.invalid",
+    password: "fixture-password",
+    fetchImpl: async (url, options) => { calls.push({ url, options }); return queue.shift(); },
+    logger: { info() {} },
+    sleep: async () => {},
+    minRequestIntervalMs: 0,
+  });
+  await client.login();
+  assert.equal(calls.length, 2, "the version comes from the page itself - no extra request");
+  assert.equal(new Headers(calls[1].options.headers).get("X-App-Version"), "0.9.99");
+});
+
+test("without a versioned bundle path the client reads the version from the bundle's chunks", async () => {
+  const calls = [];
+  const bodies = {
+    "/assets/index.js": `import "./chunk-a.js";`,
+    "/assets/chunk-a.js": `e.headers["X-APP-VERSION"]="1.2.3",e`,
+  };
+  const fetchImpl = async (url, options) => {
+    calls.push({ url, options });
+    const path = new URL(url).pathname;
+    if (path === "/en") return response(`<meta name="csrf-token" content="c"><script type="module" src="/assets/index.js"></script>`, { contentType: "text/html" });
+    if (bodies[path]) return response(bodies[path], { contentType: "text/javascript" });
+    return response({ success: true });
+  };
+  const client = createKoffClient({ email: "fixture@example.invalid", password: "fixture-password", fetchImpl, logger: { info() {} }, sleep: async () => {}, minRequestIntervalMs: 0 });
+  await client.login();
+  const loginCall = calls.find(c => new URL(c.url).pathname === "/login/enter");
+  assert.equal(new Headers(loginCall.options.headers).get("X-App-Version"), "1.2.3");
 });

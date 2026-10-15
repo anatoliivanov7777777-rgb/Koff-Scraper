@@ -1,5 +1,11 @@
 const DEFAULT_BASE_URL = "https://shop.koff.ro";
-const DEFAULT_APP_VERSION = "0.9.78";
+// What Koff's own web app sends as X-APP-VERSION. Koff rejects a login from an
+// old version with HTTP 400 (2026-10-14: 0.9.78 stopped working, the site was
+// on 0.9.82). login() reads the live value from the site's own bundle, so this
+// is only the fallback when that read finds nothing.
+const DEFAULT_APP_VERSION = "0.9.82";
+const APP_VERSION_RE = /X-APP-VERSION["']?\]?\s*[=:]\s*["'](\d+\.\d+\.\d+)["']/i;
+const MAX_VERSION_SCRIPTS = 12;
 const TOKEN_MAX_AGE_MS = 8 * 60 * 1000;
 
 // ---- Request policy -------------------------------------------------------
@@ -162,6 +168,7 @@ export function createKoffClient({
   let accessToken = null;
   let tokenIssuedAt = 0;
   let lastCsrfToken = null;
+  let currentAppVersion = appVersion;
 
   const requestIntervalMs = resolveMinRequestIntervalMs(minRequestIntervalMs);
 
@@ -240,7 +247,7 @@ export function createKoffClient({
     const headers = new Headers(options.headers || {});
     if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
     if (!headers.has("Accept")) headers.set("Accept", "application/json");
-    headers.set("X-App-Version", appVersion);
+    headers.set("X-App-Version", currentAppVersion);
     headers.set("X-Requested-With", "XMLHttpRequest");
 
     const cookieHeader = cookieHeaderString();
@@ -308,10 +315,12 @@ export function createKoffClient({
     }
   }
 
+  let lastPageHtml = "";
   async function getCsrfToken() {
     const response = await request(`/en?_=${now()}`);
     if (!response.ok) throw new Error(`Koff CSRF page failed with HTTP ${response.status}`);
     const html = await response.text();
+    lastPageHtml = html;
     const match = html.match(
       /<meta\s+name=["']csrf-token["']\s+content=["']([^"']+)["']/i
     );
@@ -319,8 +328,46 @@ export function createKoffClient({
     return match[1];
   }
 
+  // The app version Koff's own site sends today: read from the site's module
+  // bundle (the entry script, then the chunks it imports), at most a dozen
+  // GETs, once per login. Nothing found -> the current value stays.
+  async function detectAppVersion(html) {
+    // The page names its bundle by version: <script src="/app/0.9.82/js/index.js">.
+    const inPath = String(html || "").match(/<script[^>]+src=["']\/app\/(\d+\.\d+\.\d+)\//i);
+    if (inPath) return inPath[1];
+    const entries = [...String(html || "").matchAll(/<script[^>]+src=["'](\/[^"']+\.js)["']/gi)].map(m => m[1]);
+    const queue = [...entries];
+    const seen = new Set();
+    while (queue.length && seen.size < MAX_VERSION_SCRIPTS) {
+      const path = queue.shift();
+      if (seen.has(path)) continue;
+      seen.add(path);
+      let text = "";
+      try {
+        const response = await request(path, { headers: { Accept: "*/*" } });
+        if (!response.ok) continue;
+        text = await response.text();
+      } catch {
+        continue;
+      }
+      const found = text.match(APP_VERSION_RE);
+      if (found) return found[1];
+      const dir = path.slice(0, path.lastIndexOf("/") + 1);
+      for (const m of text.matchAll(/["'](\.\/[\w-]+\.js|\/assets\/[\w-]+\.js)["']/g)) {
+        const next = m[1].startsWith("./") ? dir + m[1].slice(2) : m[1];
+        if (!seen.has(next)) queue.push(next);
+      }
+    }
+    return null;
+  }
+
   async function login() {
     lastCsrfToken = await getCsrfToken();
+    const liveVersion = await detectAppVersion(lastPageHtml);
+    if (liveVersion && liveVersion !== currentAppVersion) {
+      logger.info?.(`Koff app version: ${currentAppVersion} -> ${liveVersion}`);
+      currentAppVersion = liveVersion;
+    }
     // Deliberately does NOT log cookie names: they are session material, the
     // count is all an operator needs, and the values must never reach a log.
     logger.info?.(`Koff session cookies received: ${cookieJar.size}`);
