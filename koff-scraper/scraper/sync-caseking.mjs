@@ -58,13 +58,34 @@ const SYNC_OPERATIONS = new Set([
 function assertSyncOperation(operation) {
   if (!SYNC_OPERATIONS.has(operation)) throw new Error("Operation is not approved for machine sync");
 }
+// A dropped connection is not a failed sync (2026-10-15: batch 240 of a live
+// run died on "fetch failed / ECONNRESET" after 23 900 good updates). Network
+// errors and gateway hiccups are retried; anything Convex itself rejects is
+// not. Retrying is safe: every upsert is keyed by sourceKey, the stock pass by
+// product id.
+const RETRY_DELAYS_MS = [2000, 5000, 15000];
+export function isTransientNetworkError(error) {
+  const text = `${error?.message || ""} ${error?.cause?.code || ""} ${error?.cause?.message || ""}`;
+  return /fetch failed|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|socket hang up|UND_ERR|other side closed|\b50[234]\b/i.test(text);
+}
+export async function withNetworkRetry(fn, { delays = RETRY_DELAYS_MS, sleep = ms => new Promise(r => setTimeout(r, ms)), log = console.warn } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (attempt >= delays.length || !isTransientNetworkError(error)) throw error;
+      log(`  мрежова грешка (${error?.cause?.code || error?.message}), нов опит след ${delays[attempt] / 1000} s`);
+      await sleep(delays[attempt]);
+    }
+  }
+}
 function syncMutation(convex, operation, args) {
   assertSyncOperation(operation);
-  return convex.mutation(operation, { ...args, syncSecret: CASEKING_SYNC_SECRET });
+  return withNetworkRetry(() => convex.mutation(operation, { ...args, syncSecret: CASEKING_SYNC_SECRET }));
 }
 function syncQueryCall(convex, operation, args) {
   assertSyncOperation(operation);
-  return convex.query(operation, { ...args, syncSecret: CASEKING_SYNC_SECRET });
+  return withNetworkRetry(() => convex.query(operation, { ...args, syncSecret: CASEKING_SYNC_SECRET }));
 }
 const LIMIT_RAW = (process.env.LIMIT || "").trim().toLowerCase();
 const LIMIT = LIMIT_RAW && LIMIT_RAW !== "all" ? parseInt(LIMIT_RAW, 10) : null;
@@ -391,9 +412,9 @@ async function main() {
 
   console.log("\nЗареждам съществуващи категории/марки/модели от case-king.bg...");
   const [existingCats, existingBrands, existingModels] = await Promise.all([
-    convex.query("meta:getCategories"),
-    convex.query("meta:getBrands"),
-    convex.query("meta:getModels"),
+    withNetworkRetry(() => convex.query("meta:getCategories")),
+    withNetworkRetry(() => convex.query("meta:getBrands")),
+    withNetworkRetry(() => convex.query("meta:getModels")),
   ]);
 
   const catIds = new Set(existingCats.map((c) => c.id));
