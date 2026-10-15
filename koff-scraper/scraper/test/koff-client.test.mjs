@@ -147,3 +147,27 @@ test("without a versioned bundle path the client reads the version from the bund
   const loginCall = calls.find(c => new URL(c.url).pathname === "/login/enter");
   assert.equal(new Headers(loginCall.options.headers).get("X-App-Version"), "1.2.3");
 });
+
+test("a dropped connection on a read is retried; a write is not", async () => {
+  const drop = () => Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
+  let reads = 0;
+  const client = createKoffClient({
+    email: "fixture@example.invalid",
+    password: "fixture-password",
+    fetchImpl: async (url) => {
+      const path = new URL(url).pathname;
+      if (path === "/en") {
+        reads++;
+        if (reads < 3) throw drop();
+        return response(`<meta name="csrf-token" content="c">`, { contentType: "text/html" });
+      }
+      if (path === "/login/enter") throw drop();
+      return response({ success: true });
+    },
+    logger: { info() {} },
+    sleep: async () => {},
+    minRequestIntervalMs: 0,
+  });
+  await assert.rejects(client.login(), /fetch failed/, "the POST login is not repeated");
+  assert.equal(reads, 3, "the GET page was read again after two drops");
+});

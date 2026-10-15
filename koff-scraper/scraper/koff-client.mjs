@@ -35,6 +35,13 @@ const MAX_RETRIES = 3;
  */
 const FALLBACK_RETRY_DELAYS_MS = [1000, 2000, 4000];
 
+/** Waits before re-reading after the connection itself dropped. */
+const NETWORK_RETRY_DELAYS_MS = [2000, 5000, 15000, 30000];
+function isNetworkError(error) {
+  const text = `${error?.message || ""} ${error?.cause?.code || ""} ${error?.cause?.message || ""}`;
+  return /fetch failed|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|socket hang up|UND_ERR|other side closed/i.test(text);
+}
+
 /** Statuses that mean "this run is not authorised" - never retried. */
 const AUTHORIZATION_FAILURE_STATUSES = new Set([401, 403]);
 
@@ -173,7 +180,7 @@ export function createKoffClient({
   const requestIntervalMs = resolveMinRequestIntervalMs(minRequestIntervalMs);
 
   // Per-run telemetry. Counters only - never a credential or a body.
-  const counters = { requests: 0, retries: 0, http429: 0, transient5xx: 0, authFailures: 0 };
+  const counters = { requests: 0, retries: 0, http429: 0, transient5xx: 0, networkErrors: 0, authFailures: 0 };
 
   // Authorization latch. Set the first time Koff answers 401/403; from then on
   // every outbound call fails fast instead of continuing to hammer an endpoint
@@ -292,7 +299,19 @@ export function createKoffClient({
     assertNotLatched();
 
     for (let attemptIndex = 0; ; attemptIndex++) {
-      const response = await attempt(path, options, method);
+      let response;
+      try {
+        response = await attempt(path, options, method);
+      } catch (error) {
+        // A dropped connection (2026-10-15: "fetch failed / ECONNRESET" in the
+        // middle of a category crawl). Same policy as a busy reply: only reads
+        // are retried, on the documented fixed delays, then the error stands.
+        if (!retryable || attemptIndex >= NETWORK_RETRY_DELAYS_MS.length || !isNetworkError(error)) throw error;
+        counters.networkErrors++;
+        counters.retries++;
+        await sleep(NETWORK_RETRY_DELAYS_MS[attemptIndex]);
+        continue;
+      }
 
       if (AUTHORIZATION_FAILURE_STATUSES.has(response.status)) {
         // Not retried, not worked around. The caller still sees this response
