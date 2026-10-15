@@ -1,63 +1,78 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { addVat, calcB2BPrice, calcB2CPrice } from "../pricing.mjs";
+import { addVat, calcB2BPrice, calcB2CPrice, targetMargin, B2C_PRICE_LADDER } from "../pricing.mjs";
 
-test("B2B rounds to nearest .99 while keeping 45% base markup bounds", () => {
-  assert.equal(calcB2BPrice(5), 6.99);      // target 7.25 -> down
-  assert.equal(calcB2BPrice(10), 14.99);   // target 14.50 -> up
-  assert.equal(calcB2BPrice(0.5), 1.99);   // 0.99 would violate €0.60 minimum
-  assert.equal(calcB2BPrice(100), 107.99); // respects €8 maximum
+// The contract. B2C is v2; B2B is still the current 45% trade formula until
+// the backend approves B2B accounts (then B2B moves to the v2 25% rule).
+export const VECTORS = [
+  // base, B2C, B2B
+  [0.01, 9.99, 1.99],
+  [1.22, 9.99, 1.99],
+  [2.44, 9.99, 3.99],
+  [3.42, 9.99, 4.99],
+  [4.68, 12.99, 6.99],
+  [8.5, 14.99, 11.99],
+  [10.62, 17.99, 14.99],
+  [15.11, 24.99, 21.99],
+  [20.21, 32.99, 27.99],
+  [28.87, 42.99, 35.99],
+  [39.46, 52.99, 46.99],
+  [100, 129.99, 107.99],
+];
+
+test("the shared price vectors", () => {
+  for (const [base, b2c, b2b] of VECTORS) {
+    assert.equal(calcB2CPrice(base), b2c, `B2C for base ${base}`);
+    assert.equal(calcB2BPrice(base), b2b, `B2B for base ${base}`);
+  }
 });
 
-test("B2C rounds to nearest .99 while keeping 80% base markup bounds", () => {
-  assert.equal(calcB2CPrice(5), 8.99);      // target 9.00 -> down
-  assert.equal(calcB2CPrice(10), 17.99);    // target 18.00 -> down
-  assert.equal(calcB2CPrice(0.5), 4.99);    // 2.99 would be below the €4.99 retail floor
-  assert.equal(calcB2CPrice(100), 111.99);  // respects €12 maximum
+test("B2C: never under 9.99 and never under base + 6 €", () => {
+  for (let base = 0.01; base < 300; base += 0.07) {
+    const price = calcB2CPrice(base);
+    assert.ok(price >= 9.99 - 1e-9, `base ${base}: ${price}`);
+    assert.ok(price - base >= 6 - 1e-9, `base ${base}: margin ${price - base}`);
+  }
 });
 
-test("all returned prices end in .99 and stay inside configured markup bounds", () => {
-  const samples = [0.01, 0.25, 0.5, 1, 2.5, 5, 10, 15, 25, 50, 100, 250];
+test("B2C: a dearer product is never cheaper (no steps backwards)", () => {
+  let previous = 0;
+  for (let base = 0.01; base < 300; base += 0.01) {
+    const price = calcB2CPrice(base);
+    assert.ok(price >= previous - 1e-9, `base ${base.toFixed(2)}: ${previous} -> ${price}`);
+    previous = price;
+  }
+});
 
-  for (const base of samples) {
+test("B2C: prices are ladder points (or x4.99 / x9.99 above 100 €)", () => {
+  for (let base = 0.01; base < 300; base += 0.13) {
+    const price = calcB2CPrice(base);
+    if (price <= 99.99) assert.ok(B2C_PRICE_LADDER.includes(price), `${price} not on the ladder`);
+    else assert.ok([4.99, 9.99].includes(Math.round((price % 10) * 100) / 100), `${price} not x4.99/x9.99`);
+  }
+});
+
+test("B2C: profit stays within 1 € of the target or above it", () => {
+  for (let base = 0.01; base < 300; base += 0.11) {
+    const margin = calcB2CPrice(base) - base;
+    assert.ok(margin >= Math.min(targetMargin(base) - 1, targetMargin(base)) - 1e-9, `base ${base}`);
+  }
+});
+
+test("B2B: current 45% trade formula, 0.60-8 € markup, .99, at least 1.99, never above B2C", () => {
+  for (let base = 0.01; base < 300; base += 0.07) {
     const b2b = calcB2BPrice(base);
     const b2c = calcB2CPrice(base);
-
     assert.equal(Math.round(b2b * 100) % 100, 99);
-    assert.equal(Math.round(b2c * 100) % 100, 99);
-
-    const b2bMarkup = b2b - base;
-    const b2cMarkup = b2c - base;
-
-    assert.ok(b2bMarkup >= 0.6 - 1e-9 && b2bMarkup <= 8 + 1e-9);
-    assert.ok(b2cMarkup >= 2 - 1e-9 && b2cMarkup <= 12 + 1e-9);
+    assert.ok(b2b >= 1.99 - 1e-9);
+    assert.ok(b2b <= b2c + 1e-9);
+    assert.ok(b2b - base <= 8 + 1e-9, `base ${base}: B2B markup ${b2b - base}`);
+    if (b2b < b2c && base > 1.4) assert.ok(b2b - base >= 0.6 - 1e-9, `base ${base}`);
   }
 });
 
-
-test("VAT is applied before B2B/B2C markup and .99 rounding", () => {
-  const net = 10;
-  const gross = addVat(net);
-
-  assert.equal(gross, 12);
-  assert.equal(calcB2BPrice(gross), 16.99); // 12 + 45% = 17.40 -> nearest valid .99
-  assert.equal(calcB2CPrice(gross), 21.99); // 12 + 80% = 21.60 -> nearest valid .99
-});
-
-test("B2C never goes below the 4.99 retail floor", () => {
-  for (const base of [0.01, 0.5, 1, 1.5, 2, 2.5, 2.77, 2.99]) {
-    assert.ok(calcB2CPrice(base) >= 4.99, `base ${base}`);
-  }
-  assert.equal(calcB2CPrice(1.5), 4.99);   // was 3.99
-  assert.equal(calcB2CPrice(3), 5.99);     // above the floor: unchanged rules
-  assert.equal(calcB2BPrice(0.5), 1.99);
-});
-
-test("B2B never goes below the 1.99 floor (owner, 2026-10-13)", () => {
-  for (const base of [0.01, 0.1, 0.25, 0.39, 0.5, 1]) {
-    assert.ok(calcB2BPrice(base) >= 1.99, `base ${base}`);
-  }
-  assert.equal(calcB2BPrice(0.1), 1.99);   // was 0.99
-  assert.equal(calcB2BPrice(5), 6.99);     // above the floor: unchanged rules
+test("VAT 23% is applied before the markup", () => {
+  assert.equal(Math.round(addVat(10) * 100) / 100, 12.3);
+  assert.equal(calcB2CPrice(addVat(10)), 19.99);
 });
