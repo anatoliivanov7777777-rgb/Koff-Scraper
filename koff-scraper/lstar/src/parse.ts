@@ -34,6 +34,12 @@ export interface ProductPage {
   /** true = "Наличен", false = изчерпан, null = неизвестно. */
   inStock: boolean | null;
   loggedIn: boolean;
+  /** Снимките от галерията, в реда на сайта, в 1000×1000 (data-largeimg). */
+  images: string[];
+  /** Таблицата „Спецификация“: „Модел Телефон“, „Бранд“, „Марка“, „Цвят“, „Дължина“… */
+  attributes: Record<string, string>;
+  /** Текстът от таба „Описание“, без HTML. */
+  description: string;
 }
 
 const clean = (s: string | undefined | null): string =>
@@ -136,7 +142,35 @@ export function parseProductPage(html: string): ProductPage {
     }
   }
 
+  const images: string[] = [];
+  for (const img of root.querySelectorAll(".product-image .main-image .swiper-slide img")) {
+    const url = img.getAttribute("data-largeimg") || img.getAttribute("src") || "";
+    if (/^https:\/\/lstarbg\.com\/image\//.test(url) && !images.includes(url)) images.push(url);
+  }
+
+  const attributes: Record<string, string> = {};
+  for (const tr of root.querySelectorAll("#tab-specification tbody tr")) {
+    const cells = tr.querySelectorAll("td");
+    if (cells.length < 2) continue;
+    const key = clean(cells[0].text);
+    const value = clean(cells[1].text);
+    if (key && value && !(key in attributes)) attributes[key] = value;
+  }
+
+  // Темата слага случайни id-та на табовете („#product_tabs-6ad626…“), затова
+  // табът се намира по надписа си „Описание“, а не по id.
+  let description = "";
+  const descriptionTab = root.querySelectorAll("a").find((a) =>
+    /^#product_tabs-/.test(a.getAttribute("href") ?? "") && clean(a.text) === "Описание");
+  const paneId = descriptionTab?.getAttribute("href")?.slice(1);
+  if (paneId && /^[\w-]+$/.test(paneId)) {
+    description = clean(root.querySelector(`#${paneId}`)?.text).replace(/^\.+$/, "");
+  }
+
   return {
+    images,
+    attributes,
+    description,
     name: clean(root.querySelector("#product h1, .product-details h1, h1")?.text),
     brand: clean(root.querySelector(".product-manufacturer span")?.text),
     model: statValue(root, "product-model"),

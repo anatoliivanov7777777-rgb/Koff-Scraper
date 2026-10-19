@@ -116,3 +116,59 @@ jobs:
           # without someone choosing it.
           STOCK_ZERO_MODE: ${{ github.event_name == 'schedule' && 'apply' || github.event.inputs.stock_zero || 'dry' }}
         run: node sync-caseking.mjs
+
+      # ---- LStar (lstarbg.com), the fourth supplier (owner, 2026-10-19) ----
+      # Runs in the same job, right after the Koff sync, as the owner asked.
+      #
+      # Two locks keep it from writing before the owner's "да":
+      #   1. the repository VARIABLE LSTAR_SYNC_ENABLED must be exactly "true"
+      #      (Settings -> Secrets and variables -> Actions -> Variables); until
+      #      then every LStar run is a DRY RUN, scheduled or not;
+      #   2. the shop backend must have the lstarSync module deployed.
+      # continue-on-error: a problem on the LStar side (portal down, login
+      # changed, backend not deployed yet) must never fail the Koff job, which
+      # has already finished above.
+      - name: Install LStar scraper dependencies
+        continue-on-error: true
+        working-directory: koff-scraper/lstar
+        run: npm ci
+
+      - name: Scrape lstarbg.com
+        id: lstar_scrape
+        continue-on-error: true
+        working-directory: koff-scraper/lstar
+        env:
+          LSTAR_EMAIL: ${{ secrets.LSTAR_EMAIL }}
+          LSTAR_PASSWORD: ${{ secrets.LSTAR_PASSWORD }}
+          LSTAR_PRICES_INCLUDE_VAT: "yes"
+          OUT_DIR: out
+        run: npm run scrape
+
+      - name: Sync LStar to CaseKing Convex
+        if: steps.lstar_scrape.outcome == 'success'
+        continue-on-error: true
+        working-directory: koff-scraper/lstar
+        env:
+          CASEKING_CONVEX_URL: ${{ secrets.CASEKING_SYNC_CONVEX_URL }}
+          CASEKING_SYNC_SECRET: ${{ secrets.CASEKING_SYNC_DEV_SECRET }}
+          # LIVE only when the owner's switch is on AND this run is live for
+          # Koff too (a manual Koff dry run keeps LStar dry as well).
+          LIVE: ${{ vars.LSTAR_SYNC_ENABLED == 'true' && (github.event.inputs.live || 'true') == 'true' && 'true' || 'false' }}
+          STOCK_ZERO_MODE: ${{ github.event_name == 'schedule' && 'apply' || github.event.inputs.stock_zero || 'dry' }}
+          IN_FILE: out/lstar-products.json
+          OUT_DIR: out
+        run: npm run sync
+
+      - name: Upload the LStar report
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: lstar-sync-${{ github.run_id }}
+          path: |
+            koff-scraper/lstar/out/lstar-sync-report.json
+            koff-scraper/lstar/out/lstar-report.json
+            koff-scraper/lstar/out/lstar-products.csv
+            koff-scraper/lstar/out/lstar-products-priced.csv
+          if-no-files-found: ignore
+          retention-days: 14

@@ -30,6 +30,24 @@ export interface CsvRow {
   note: string;
 }
 
+/** Всичко, което магазинът ползва за един продукт (lstar-products.json). */
+export interface ScrapedProduct {
+  productId: string;
+  url: string;
+  categoryPath: string;
+  categoryName: string;
+  brand: string;
+  name: string;
+  model: string;
+  sku: string;
+  ean: string;
+  priceEur: number | null;
+  inStock: boolean | null;
+  images: string[];
+  attributes: Record<string, string>;
+  description: string;
+}
+
 export interface CategoryReport {
   path: string;
   name: string;
@@ -109,7 +127,7 @@ async function readCategory(
   return { name, declaredTotal, products };
 }
 
-export async function scrapeLstar(options: ScrapeOptions): Promise<{ rows: CsvRow[]; report: ScrapeReport }> {
+export async function scrapeLstar(options: ScrapeOptions): Promise<{ rows: CsvRow[]; products: ScrapedProduct[]; report: ScrapeReport }> {
   const {
     fetchText,
     categoryPaths = DEFAULT_CATEGORY_PATHS,
@@ -120,6 +138,7 @@ export async function scrapeLstar(options: ScrapeOptions): Promise<{ rows: CsvRo
 
   const startedAt = now().toISOString();
   const rows: CsvRow[] = [];
+  const scraped: ScrapedProduct[] = [];
   const categories: CategoryReport[] = [];
   const done = new Set<string>();
   let duplicates = 0;
@@ -195,6 +214,23 @@ export async function scrapeLstar(options: ScrapeOptions): Promise<{ rows: CsvRo
       const sku = pageSku || (kind === "manufacturer" ? model : "");
       if (!sku) notes.push("няма SKU на производителя");
 
+      scraped.push({
+        productId: item.productId,
+        url: item.url,
+        categoryPath: path,
+        categoryName: name,
+        brand: item.brand || page?.brand || "",
+        name: item.name || page?.name || "",
+        model,
+        sku,
+        ean,
+        priceEur: price,
+        inStock: page?.inStock ?? null,
+        images: page?.images ?? [],
+        attributes: page?.attributes ?? {},
+        description: (page?.description ?? "").slice(0, 3000),
+      });
+
       rows.push({
         brand: item.brand || page?.brand || "",
         name: item.name || page?.name || "",
@@ -212,6 +248,7 @@ export async function scrapeLstar(options: ScrapeOptions): Promise<{ rows: CsvRo
 
   return {
     rows,
+    products: scraped,
     report: {
       startedAt,
       finishedAt: now().toISOString(),
