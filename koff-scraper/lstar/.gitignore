@@ -1,0 +1,7 @@
+node_modules/
+dist/
+out/
+lstar-products.csv
+lstar-report.json
+lstar-products-priced.csv
+.env*

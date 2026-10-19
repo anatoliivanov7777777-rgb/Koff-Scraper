@@ -1,0 +1,29 @@
+{
+  "name": "lstar-scraper",
+  "version": "1.0.0",
+  "description": "Скрейпър за B2B портала lstarbg.com (LINK STAR / EKOPHONE BULGARIA) → CSV",
+  "scripts": {
+    "scrape": "tsx src/cli.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json",
+    "build:browser": "esbuild src/browser-entry.ts --bundle --format=iife --alias:node-html-parser=./src/html-dom.ts --outfile=dist/lstar-browser.js"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "node-html-parser": "^9.0.5"
+  },
+  "devDependencies": {
+    "@types/jsdom": "^30.0.0",
+    "@types/node": "^26.6.5",
+    "esbuild": "^0.28.2",
+    "jsdom": "^29.1.1",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  },
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,45 @@
+name: Scrape lstarbg.com (manual)
+
+# Manual-only (workflow_dispatch, no schedule).
+#
+# What it does and does not touch:
+#   - logs in to lstarbg.com with LSTAR_EMAIL / LSTAR_PASSWORD (GitHub Secrets)
+#     and READS three categories plus their product pages
+#   - writes lstar-products.csv (agreed format), lstar-products-priced.csv
+#     (+ CaseKing B2B/B2C prices) and lstar-report.json as a run artifact
+#   - does NOT touch the LStar cart, Convex, CaseKing or the Koff scraper
+#   - runs tsc + vitest first; a red check stops the scrape
+on:
+  workflow_dispatch: {}
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: koff-scraper/lstar
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        run: npm ci
+      - name: Type check
+        run: npm run typecheck
+      - name: Tests
+        run: npm test
+      - name: Scrape
+        env:
+          LSTAR_EMAIL: ${{ secrets.LSTAR_EMAIL }}
+          LSTAR_PASSWORD: ${{ secrets.LSTAR_PASSWORD }}
+          # Owner, 2026-10-19: LStar prices already include VAT.
+          LSTAR_PRICES_INCLUDE_VAT: "yes"
+          OUT_DIR: out
+        run: npm run scrape
+      - name: Upload CSV + report
+        uses: actions/upload-artifact@v4
+        with:
+          name: lstar-catalog-${{ github.run_id }}
+          path: koff-scraper/lstar/out/
+          retention-days: 14
