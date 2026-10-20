@@ -5,3 +5,5 @@ lstar-products.csv
 lstar-report.json
 lstar-products-priced.csv
 .env*
+lstar-products.json
+lstar-sync-report.json

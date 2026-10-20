@@ -90,3 +90,40 @@ describe("parseProductPage", () => {
     expect(p.priceEur).toBe(16.38);
   });
 });
+
+describe("parseProductPage: gallery, specification, description", () => {
+  // Real markup of product 34497 (2026-10-19), trimmed to the parts we read.
+  const html = `<html><body><a href="https://lstarbg.com/index.php?route=account/logout">Изход</a>
+<div class="product-image direction-vertical position-left"> <div class="swiper main-image"> <div class="swiper-container"> <div class="swiper-wrapper">
+<div class="swiper-slide" data-index="0"> <img src="https://lstarbg.com/image/cache/catalog/philcabvle2-550x550h.JPG" data-largeimg="https://lstarbg.com/image/cache/catalog/philcabvle2-1000x1000h.JPG" alt="2452 Philips кабел"> </div>
+<div class="swiper-slide" data-index="1"> <img src="https://lstarbg.com/image/cache/catalog/philcabvle3-550x550h.JPG" data-largeimg="https://lstarbg.com/image/cache/catalog/philcabvle3-1000x1000h.JPG"> </div>
+<div class="swiper-slide" data-index="2"> <img src="https://evil.example/x.jpg"> </div>
+</div></div></div></div>
+<ul class="nav nav-tabs"> <li class="active"> <a href="#product_tabs-6ad62698a1967" data-toggle="tab">Описание</a> </li> <li> <a href="#product_tabs-6ad62698a2260" data-toggle="tab">Спецификации</a> </li> </ul>
+<div class="tab-content">
+<div class="tab-pane active" id="product_tabs-6ad62698a1967"><div class="block-content"><div style="color:red">Кабел за синхронизиране и зареждане, <b>USB-A към USB-C</b>.</div></div></div>
+<div class="tab-pane" id="product_tabs-6ad62698a2260"><div id="tab-specification"><table class="table table-bordered"><thead><tr><td colspan="2"><strong>Default</strong></td></tr></thead>
+<tbody><tr><td>Тип</td><td>USB -TYPE C</td></tr><tr><td>Марка</td><td>Philips</td></tr><tr><td>Дължина</td><td>1.2M</td></tr></tbody></table></div></div>
+</div>
+<div class="product-price-group"><div class="product-price">€1.60</div><div class="product-stats"><ul>
+<li class="product-stock in-stock"><b>Изчерпан:</b> <span>Наличен</span></li><li class="product-model"><b>Model:</b> <span>2170818</span></li></ul></div></div>
+</body></html>`;
+  const p = parseProductPage(html);
+
+  it("takes the 1000×1000 gallery images, only from lstarbg.com, in order", () => {
+    expect(p.images).toEqual([
+      "https://lstarbg.com/image/cache/catalog/philcabvle2-1000x1000h.JPG",
+      "https://lstarbg.com/image/cache/catalog/philcabvle3-1000x1000h.JPG",
+    ]);
+  });
+  it("reads the specification table, without the header row", () => {
+    expect(p.attributes).toEqual({ "Тип": "USB -TYPE C", "Марка": "Philips", "Дължина": "1.2M" });
+  });
+  it("finds the description tab by its label, as plain text", () => {
+    expect(p.description).toBe("Кабел за синхронизиране и зареждане, USB-A към USB-C.");
+  });
+  it("no gallery, no table, no description tab: empty, not broken", () => {
+    const bare = parseProductPage(productHtml({ name: "x", model: "1" }));
+    expect(bare).toMatchObject({ images: [], attributes: {}, description: "" });
+  });
+});

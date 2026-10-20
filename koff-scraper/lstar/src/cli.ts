@@ -32,7 +32,7 @@ async function main() {
 
   const client = createLstarClient({ email, password, log: console.log });
   await client.login();
-  const { rows, report } = await scrapeLstar({
+  const { rows, products, report } = await scrapeLstar({
     fetchText: client.fetchText,
     categoryPaths: paths,
     vatIncluded: vatFlag(process.env.LSTAR_PRICES_INCLUDE_VAT),
@@ -41,6 +41,9 @@ async function main() {
 
   mkdirSync(outDir, { recursive: true });
   writeFileSync(join(outDir, "lstar-products.csv"), toCsv(rows));
+  // Пълните данни за синхронизацията с магазина (снимки, съвместими телефони,
+  // наличност). Без пароли и бисквитки - само това, което сайтът показва.
+  writeFileSync(join(outDir, "lstar-products.json"), JSON.stringify(products, null, 1));
   if (report.vatIncluded === "yes") writeFileSync(join(outDir, "lstar-products-priced.csv"), toPricedCsv(rows));
   writeFileSync(join(outDir, "lstar-report.json"), JSON.stringify({ ...report, requests: client.getCounters() }, null, 2));
   console.log(`Готово: ${rows.length} продукта → ${join(outDir, "lstar-products.csv")}`);

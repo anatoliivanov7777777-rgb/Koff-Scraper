@@ -6,10 +6,12 @@
     "scrape": "tsx src/cli.ts",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json",
-    "build:browser": "esbuild src/browser-entry.ts --bundle --format=iife --alias:node-html-parser=./src/html-dom.ts --outfile=dist/lstar-browser.js"
+    "build:browser": "esbuild src/browser-entry.ts --bundle --format=iife --alias:node-html-parser=./src/html-dom.ts --outfile=dist/lstar-browser.js",
+    "sync": "tsx src/sync.ts"
   },
   "license": "UNLICENSED",
   "dependencies": {
+    "convex": "^1.47.0",
     "node-html-parser": "^9.0.5"
   },
   "devDependencies": {
