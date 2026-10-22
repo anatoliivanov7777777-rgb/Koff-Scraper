@@ -35,6 +35,15 @@ on:
           - 'dry'
           - 'apply'
 
+      only_lstar:
+        description: 'Само LStar (true = пропуска Koff, пуска само LStar)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
   schedule:
     # Daily at 01:00 UTC (owner's instruction, 2026-10-01; was weekly, Sunday
     # 03:00 UTC). One full run - scrape, sync and the stock-zero pass - takes
@@ -74,10 +83,12 @@ jobs:
           fi
 
       - name: Install scraper dependencies
+        if: github.event.inputs.only_lstar != 'true'
         working-directory: koff-scraper/scraper
         run: npm install
 
       - name: Run koff.ro scraper
+        if: github.event.inputs.only_lstar != 'true'
         working-directory: koff-scraper/scraper
         env:
           KOFF_EMAIL: ${{ secrets.KOFF_EMAIL }}
@@ -94,6 +105,7 @@ jobs:
         run: npm run scrape
 
       - name: Sync to CaseKing Convex
+        if: github.event.inputs.only_lstar != 'true'
         working-directory: koff-scraper/scraper
         env:
           # Its OWN URL and secret, deliberately not the shared
