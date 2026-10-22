@@ -5,6 +5,7 @@ import {
   parseCategoryPage,
   parsePriceEur,
   parseProductPage,
+  priceWithVat,
 } from "../src/parse.js";
 import { categoryHtml, productHtml } from "./helpers.js";
 
@@ -37,20 +38,35 @@ describe("classifyModel / EAN", () => {
   });
 });
 
-describe("parseCategoryPage", () => {
-  const html = categoryHtml({
-    name: "Оригинални кейсове",
-    total: 3,
-    pages: 1,
-    cards: [
-      { id: "36393", brand: "GUESS", model: "2334081", name: "GUESS HC MAGSAFE &amp; LOGO", price: "€14.17" },
-      { id: "36391", brand: "KARL", model: "8809640730515", name: "KARL кейс", price: null },
-      { id: "36390", brand: "KARL", model: "KLHMP18X", name: "KARL промо", price: null, special: { old: "€20.00", new: "€16.38" } },
-    ],
+describe("priceWithVat", () => {
+  it("цена без ДДС се умножава по множителя на сайта", () => {
+    expect(priceWithVat(10, "exclusive", 1.2)).toBe(12);
+    expect(priceWithVat(14.17, "exclusive", 1.2)).toBe(17);
+    expect(priceWithVat(1.6, "exclusive", 1.2)).toBe(1.92);
   });
-  const page = parseCategoryPage(html);
+  it("цена с ДДС остава непроменена", () => {
+    expect(priceWithVat(12, "inclusive", 1.2)).toBe(12);
+  });
+  it("без цена или с нула → null", () => {
+    expect(priceWithVat(null, "exclusive", 1.2)).toBeNull();
+    expect(priceWithVat(0, "exclusive", 1.2)).toBeNull();
+  });
+});
 
-  it("чете име, брой и страници", () => {
+const cases = categoryHtml({
+  name: "Оригинални кейсове",
+  total: 3,
+  cards: [
+    { id: "36393", brand: "GUESS", handle: "3477-guess-hc", variantPublicId: "95281488", price: 14.17 },
+    { id: "36391", brand: "KARL", handle: "8694-karl-hc", variantPublicId: "29137439", price: null },
+    { id: "36390", brand: "KARL", handle: "3514-karl-hc", variantPublicId: "63569432", price: 16.38 },
+  ],
+});
+
+describe("parseCategoryPage", () => {
+  const page = parseCategoryPage(cases);
+
+  it("чете име, общ брой и брой страници", () => {
     expect(page.name).toBe("Оригинални кейсове");
     expect(page.total).toBe(3);
     expect(page.pages).toBe(1);
@@ -61,69 +77,168 @@ describe("parseCategoryPage", () => {
     expect(page.products.map((p) => p.productId)).toEqual(["36393", "36391", "36390"]);
   });
 
-  it("чете марка, model, име и цена; промо цената има приоритет", () => {
-    expect(page.products[0]).toMatchObject({ brand: "GUESS", model: "2334081", priceEur: 14.17 });
-    expect(page.products[0].name).toContain("MAGSAFE");
-    expect(page.products[1].priceEur).toBeNull();
-    expect(page.products[2].priceEur).toBe(16.38);
-    expect(page.products[0].url).toBe("https://lstarbg.com/index.php?route=product/product&product_id=36393");
+  it("сглобява адреса на продукта от urlHandle и номера на варианта", () => {
+    expect(page.products[0].url).toBe(
+      "https://lstarbg.com/products/3477-guess-hc-95281488",
+    );
   });
 
-  it("разпознава нелогната страница", () => {
-    expect(parseCategoryPage(categoryHtml({ name: "x", total: 0, pages: 1, cards: [], loggedIn: false })).loggedIn).toBe(false);
+  it("чете марка, име и цена от листинга", () => {
+    expect(page.products[0]).toMatchObject({ brand: "GUESS", priceEur: 14.17 });
+    expect(page.products[1].priceEur).toBeNull();
+    expect(page.products[2].priceEur).toBe(16.38);
+  });
+
+  it("изчислява страниците от общия брой (50 на страница)", () => {
+    const many = categoryHtml({
+      name: "Голяма",
+      total: 120,
+      cards: Array.from({ length: 50 }, (_, i) => ({
+        id: String(1000 + i),
+        brand: "A",
+        handle: `h-${i}`,
+        variantPublicId: String(10000000 + i),
+        price: 1,
+      })),
+    });
+    expect(parseCategoryPage(many).pages).toBe(3);
+  });
+
+  it("разпознава нелогната страница по pricesHidden", () => {
+    const hidden = categoryHtml({ name: "x", cards: [], loggedIn: false });
+    expect(parseCategoryPage(hidden).loggedIn).toBe(false);
   });
 });
 
 describe("parseProductPage", () => {
-  it("чете SKU, model, цена и наличност", () => {
-    const p = parseProductPage(productHtml({ name: "GUESS кейс", model: "2334081", sku: "GUHMP18X6PWKSGTK" }));
-    expect(p).toMatchObject({ model: "2334081", sku: "GUHMP18X6PWKSGTK", priceEur: 14.17, inStock: true, brand: "GUESS", loggedIn: true });
+  it("чете model, SKU, цена, режим на ДДС и наличност", () => {
+    const p = parseProductPage(
+      productHtml({
+        id: "36393",
+        handle: "3477-guess-hc",
+        variantPublicId: "95281488",
+        name: "3477 GUESS HC MAGSAFE",
+        brand: "GUESS",
+        model: "2334081",
+        netPrice: 14.17,
+      }),
+    );
+    expect(p).toMatchObject({
+      name: "3477 GUESS HC MAGSAFE",
+      brand: "GUESS",
+      model: "2334081",
+      sku: "95281488",
+      priceEur: 14.17,
+      priceBasis: "exclusive",
+      vatRatio: 1.2,
+      inStock: true,
+    });
   });
-  it("без цена и изчерпан", () => {
-    const p = parseProductPage(productHtml({ name: "x", model: "1", price: null, inStock: false }));
-    expect(p.priceEur).toBeNull();
-    expect(p.inStock).toBe(false);
-    expect(p.sku).toBe("");
+
+  it("предпочита mpn пред вътрешния номер на варианта", () => {
+    const p = parseProductPage(
+      productHtml({ id: "1", handle: "h", variantPublicId: "555", name: "x", brand: "B", mpn: "EP-TA800XWEGWW", netPrice: 9 }),
+    );
+    expect(p.sku).toBe("EP-TA800XWEGWW");
   });
-  it("промо цена на продуктовата страница", () => {
-    const p = parseProductPage(productHtml({ name: "x", model: "1", special: { old: "€20.00", new: "€16.38" } }));
+
+  it("ползва промо цената, ако я има", () => {
+    const p = parseProductPage(
+      productHtml({ id: "1", handle: "h", variantPublicId: "555", name: "x", brand: "B", netPrice: 20, salePrice: 16.38 }),
+    );
     expect(p.priceEur).toBe(16.38);
   });
-});
 
-describe("parseProductPage: gallery, specification, description", () => {
-  // Real markup of product 34497 (2026-10-19), trimmed to the parts we read.
-  const html = `<html><body><a href="https://lstarbg.com/index.php?route=account/logout">Изход</a>
-<div class="product-image direction-vertical position-left"> <div class="swiper main-image"> <div class="swiper-container"> <div class="swiper-wrapper">
-<div class="swiper-slide" data-index="0"> <img src="https://lstarbg.com/image/cache/catalog/philcabvle2-550x550h.JPG" data-largeimg="https://lstarbg.com/image/cache/catalog/philcabvle2-1000x1000h.JPG" alt="2452 Philips кабел"> </div>
-<div class="swiper-slide" data-index="1"> <img src="https://lstarbg.com/image/cache/catalog/philcabvle3-550x550h.JPG" data-largeimg="https://lstarbg.com/image/cache/catalog/philcabvle3-1000x1000h.JPG"> </div>
-<div class="swiper-slide" data-index="2"> <img src="https://evil.example/x.jpg"> </div>
-</div></div></div></div>
-<ul class="nav nav-tabs"> <li class="active"> <a href="#product_tabs-6ad62698a1967" data-toggle="tab">Описание</a> </li> <li> <a href="#product_tabs-6ad62698a2260" data-toggle="tab">Спецификации</a> </li> </ul>
-<div class="tab-content">
-<div class="tab-pane active" id="product_tabs-6ad62698a1967"><div class="block-content"><div style="color:red">Кабел за синхронизиране и зареждане, <b>USB-A към USB-C</b>.</div></div></div>
-<div class="tab-pane" id="product_tabs-6ad62698a2260"><div id="tab-specification"><table class="table table-bordered"><thead><tr><td colspan="2"><strong>Default</strong></td></tr></thead>
-<tbody><tr><td>Тип</td><td>USB -TYPE C</td></tr><tr><td>Марка</td><td>Philips</td></tr><tr><td>Дължина</td><td>1.2M</td></tr></tbody></table></div></div>
-</div>
-<div class="product-price-group"><div class="product-price">€1.60</div><div class="product-stats"><ul>
-<li class="product-stock in-stock"><b>Изчерпан:</b> <span>Наличен</span></li><li class="product-model"><b>Model:</b> <span>2170818</span></li></ul></div></div>
-</body></html>`;
-  const p = parseProductPage(html);
+  it("без цена и изчерпан", () => {
+    const p = parseProductPage(
+      productHtml({
+        id: "1",
+        handle: "h",
+        variantPublicId: "555",
+        name: "x",
+        brand: "B",
+        netPrice: null,
+        inStock: 0,
+        availableForSale: false,
+      }),
+    );
+    expect(p.priceEur).toBeNull();
+    expect(p.inStock).toBe(false);
+  });
 
-  it("takes the 1000×1000 gallery images, only from lstarbg.com, in order", () => {
+  it("чете снимките от галерията, само от lstarbg.com", () => {
+    const p = parseProductPage(
+      productHtml({
+        id: "1",
+        handle: "h",
+        variantPublicId: "555",
+        name: "x",
+        brand: "B",
+        netPrice: 1,
+        images: ["/uploads/files/2026/09/a.avif", "https://evil.example/b.jpg", "/image/cache/catalog/c.jpg"],
+      }),
+    );
     expect(p.images).toEqual([
-      "https://lstarbg.com/image/cache/catalog/philcabvle2-1000x1000h.JPG",
-      "https://lstarbg.com/image/cache/catalog/philcabvle3-1000x1000h.JPG",
+      "https://lstarbg.com/uploads/files/2026/09/a.avif",
+      "https://lstarbg.com/image/cache/catalog/c.jpg",
     ]);
   });
-  it("reads the specification table, without the header row", () => {
-    expect(p.attributes).toEqual({ "Тип": "USB -TYPE C", "Марка": "Philips", "Дължина": "1.2M" });
+
+  it("чете таблицата със спецификации като атрибути", () => {
+    const p = parseProductPage(
+      productHtml({
+        id: "1",
+        handle: "h",
+        variantPublicId: "555",
+        name: "x",
+        brand: "B",
+        netPrice: 1,
+        specs: [
+          { label: "Тип", values: ["USB -TYPE C"] },
+          { label: "Марка", values: ["Philips"] },
+          { label: "Модел Телефон", values: ["iPhone 17", "iPhone 18"] },
+        ],
+      }),
+    );
+    expect(p.attributes).toEqual({
+      "Тип": "USB -TYPE C",
+      "Марка": "Philips",
+      "Модел Телефон": "iPhone 17, iPhone 18",
+    });
   });
-  it("finds the description tab by its label, as plain text", () => {
-    expect(p.description).toBe("Кабел за синхронизиране и зареждане, USB-A към USB-C.");
+
+  it("описанието е чист текст, без HTML", () => {
+    const p = parseProductPage(
+      productHtml({
+        id: "1",
+        handle: "h",
+        variantPublicId: "555",
+        name: "x",
+        brand: "B",
+        netPrice: 1,
+        descriptionHtml: "<p>Кабел за <b>зареждане</b>.</p>",
+      }),
+    );
+    expect(p.description).toBe("Кабел за зареждане.");
   });
-  it("no gallery, no table, no description tab: empty, not broken", () => {
-    const bare = parseProductPage(productHtml({ name: "x", model: "1" }));
+
+  it("без галерия, без таблица, без описание: празно, но не счупено", () => {
+    const bare = parseProductPage(
+      productHtml({
+        id: "1",
+        handle: "h",
+        variantPublicId: "555",
+        name: "x",
+        brand: "B",
+        netPrice: 1,
+        images: [],
+        specs: [],
+      }),
+    );
     expect(bare).toMatchObject({ images: [], attributes: {}, description: "" });
+  });
+
+  it("страница без продукт → ясна грешка, вместо празен ред", () => {
+    expect(() => parseProductPage("<html><body>404</body></html>")).toThrow(/не съдържа продукт/);
   });
 });

@@ -27,7 +27,16 @@ window.lstarRun = async (opts = {}) => {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.text();
   };
-  const { rows, report } = await scrapeLstar({ fetchText, log: (m) => logs.push(m), vatIncluded: "yes", ...opts });
+  const resolveUrl = async (url: string) => {
+    const wait = last + INTERVAL_MS - Date.now();
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    last = Date.now();
+    requests++;
+    const res = await fetch(url, { credentials: "include", redirect: "manual" });
+    const location = res.headers.get("location");
+    return location && res.status >= 300 && res.status < 400 ? new URL(location, url).toString() : url;
+  };
+  const { rows, report } = await scrapeLstar({ fetchText, resolveUrl, log: (m) => logs.push(m), vatIncluded: "yes", ...opts });
   const priced = report.vatIncluded === "yes" ? toPricedCsv(rows) : "";
   return { csv: toCsv(rows), priced, report: { ...report, requests }, logs };
 };

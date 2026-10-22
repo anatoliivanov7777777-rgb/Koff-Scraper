@@ -1,8 +1,27 @@
-// Чисти функции за разчитане на HTML-а на lstarbg.com (OpenCart, тема Journal).
-// Без мрежа и без DOM: работят еднакво в Node и в браузър, затова тестовете
-// и тестовият рън минават през един и същ код.
+// Чисти функции за разчитане на страниците на lstarbg.com.
+//
+// От 21.10.2026 сайтът е Next.js. Данните за продуктите вече не са HTML, а
+// JSON в self.__next_f (src/next-payload.ts). Затова:
+//   - категориите се четат от списъка с продукти в payload-а;
+//   - продуктовата страница – от обекта с productHandle/variants/specRows.
+// HTML се чете само за заглавието на категорията (<h1>), защото то е просто
+// текст и така не зависим от вътрешната структура на payload-а.
+//
+// Модулът е без мрежа: работи еднакво в Node и в браузър (тестовият рън).
 
-import { parse, type HTMLElement } from "node-html-parser";
+import { parse } from "node-html-parser";
+import {
+  extractFlightText,
+  findObject,
+  findObjectArrays,
+  num,
+  parseFlightRows,
+  str,
+  walkObjects,
+  type JsonObject,
+} from "./next-payload.js";
+
+export const LSTAR_BASE_URL = "https://lstarbg.com";
 
 export interface ListingProduct {
   productId: string;
@@ -10,44 +29,70 @@ export interface ListingProduct {
   brand: string;
   model: string;
   name: string;
-  /** Цена в EUR от листинга, или null ако там няма цена. */
+  /** Цена в EUR от листинга, както я показва сайтът, или null ако там няма цена. */
   priceEur: number | null;
 }
 
 export interface CategoryPage {
   name: string;
-  /** Общ брой продукти според "Показани X от Y | Z (N Страници)". */
+  /** Общ брой продукти според "resultCount" на сайта. */
   total: number | null;
+  /** Брой страници – изчислява се от общия брой и дължината на една страница. */
   pages: number | null;
   products: ListingProduct[];
-  /** Има ли линк за изход - т.е. сесията е логната. */
+  /** Логната ли е сесията. Сайтът крие цените от нелогнати клиенти. */
   loggedIn: boolean;
 }
+
+/** Дали цената от payload-а е с ДДС или без. */
+export type PriceBasis = "inclusive" | "exclusive" | "unknown";
 
 export interface ProductPage {
   name: string;
   brand: string;
   model: string;
-  /** SKU на производителя от полето "SKU:" (празно ако липсва). */
+  /** SKU на производителя (mpn); ако липсва – вътрешният номер на варианта. */
   sku: string;
+  /** Цената, както я дава сайтът – виж priceBasis, преди да я ползваш за база. */
   priceEur: number | null;
-  /** true = "Наличен", false = изчерпан, null = неизвестно. */
+  priceBasis: PriceBasis;
+  /** Колко е ДДС множителят според сайта (обикновено 1.2 = 20 %). */
+  vatRatio: number;
+  /** true = поне един вариант е наличен, false = всички са изчерпани, null = неизвестно. */
   inStock: boolean | null;
   loggedIn: boolean;
-  /** Снимките от галерията, в реда на сайта, в 1000×1000 (data-largeimg). */
+  /** Снимките от галерията, в реда на сайта, като абсолютни адреси. */
   images: string[];
-  /** Таблицата „Спецификация“: „Модел Телефон“, „Бранд“, „Марка“, „Цвят“, „Дължина“… */
+  /** Таблицата „Спецификации“: „Модел Телефон“, „Бранд“, „Марка“, „Цвят“, „Дължина“… */
   attributes: Record<string, string>;
-  /** Текстът от таба „Описание“, без HTML. */
+  /** Текстът от описанието, без HTML. */
   description: string;
 }
 
 const clean = (s: string | undefined | null): string =>
-  (s ?? "").replace(/ /g, " ").replace(/\s+/g, " ").trim();
+  (s ?? "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
 
-function decodeHref(href: string): string {
-  return href.replace(/&amp;/g, "&");
+const ENTITIES: Record<string, string> = {
+  "&amp;": "&",
+  "&quot;": '"',
+  "&#39;": "'",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&nbsp;": " ",
+};
+
+function stripHtml(html: string): string {
+  return clean(
+    html
+      .replace(/<br\s*\/?>/gi, " ")
+      .replace(/<\/(p|div|li|tr|h\d)>/gi, " ")
+      .replace(/<[^>]*>/g, "")
+      .replace(/&(amp|quot|#39|lt|gt|nbsp);/g, (m) => ENTITIES[m] ?? m)
+      .replace(/\s+([.,;:!?])/g, "$1"),
+  );
 }
+
+const flightRows = (html: string): unknown[] => parseFlightRows(extractFlightText(html));
 
 /**
  * "€14.17", "14,17 €", "€1,234.56", "1 234,56 €" -> число. null ако няма цифри.
@@ -62,122 +107,176 @@ export function parsePriceEur(text: string | null | undefined): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
-/** Текущата цена в елемент .price: промоционалната (price-new) има приоритет. */
-function priceFrom(el: HTMLElement | null): number | null {
-  if (!el) return null;
-  const candidate =
-    el.querySelector(".price-new") ??
-    el.querySelector(".price-normal") ??
-    el;
-  return parsePriceEur(candidate.text);
+/**
+ * Цена с ДДС. Сайтът показва цените без ДДС (shownBasis "exclusive"), а
+ * магазинът работи с цени с ДДС, затова тук се умножава по множителя на сайта.
+ * Ако сайтът вече дава цена с ДДС, числото се връща непроменено.
+ */
+export function priceWithVat(
+  value: number | null,
+  basis: PriceBasis,
+  vatRatio: number,
+): number | null {
+  if (value === null || !Number.isFinite(value) || value <= 0) return null;
+  if (basis !== "exclusive" || !Number.isFinite(vatRatio) || vatRatio <= 1) return value;
+  return Math.round(value * vatRatio * 100) / 100;
 }
 
-function isLoggedIn(root: HTMLElement): boolean {
-  return root.querySelectorAll("a").some((a) =>
-    /route=account\/logout/.test(a.getAttribute("href") ?? "")
+// ---- Категория ------------------------------------------------------------------
+
+/** Продуктова карта в листинга: има адрес, вариант и име. */
+function isListingCard(o: JsonObject): boolean {
+  return (
+    typeof o.urlHandle === "string" &&
+    typeof o.defaultVariantPublicId === "string" &&
+    typeof o.name === "string"
   );
 }
 
+/** Снимка/атрибути, които идват като относителен път, стават абсолютни. */
+function absoluteUrl(path: string): string {
+  if (!path) return "";
+  if (/^https:\/\//.test(path)) return path;
+  return path.startsWith("/") ? `${LSTAR_BASE_URL}${path}` : "";
+}
+
 export function parseCategoryPage(html: string): CategoryPage {
-  const root = parse(html);
-  const name = clean(root.querySelector("#content h1, h1")?.text);
+  const rows = flightRows(html);
 
-  const resultsText =
-    clean(root.querySelector(".pagination-results, .results")?.text) ||
-    (clean(root.text).match(/Показани[^|]*\|[^)]*\)/)?.[0] ?? "");
-  const totalMatch = resultsText.match(/от\s+(\d+)/);
-  const pagesMatch = resultsText.match(/\((\d+)\s+Страниц/);
+  const cards = findObjectArrays(rows, isListingCard)
+    .sort((a, b) => b.length - a.length)[0] ?? [];
 
-  const cards = root.querySelectorAll(".main-products .product-layout");
+  const seen = new Set<string>();
   const products: ListingProduct[] = [];
   for (const card of cards) {
-    const link = card.querySelector(".name a") ?? card.querySelector('a[href*="product_id="]');
-    const href = decodeHref(link?.getAttribute("href") ?? "");
-    const id = href.match(/product_id=(\d+)/)?.[1];
-    if (!id) continue;
+    const id = num(card.id);
+    if (id === null || !Number.isInteger(id) || id <= 0) continue;
+    const productId = String(id);
+    if (seen.has(productId)) continue;
+    seen.add(productId);
+    const handle = str(card.urlHandle);
     products.push({
-      productId: id,
-      url: `https://lstarbg.com/index.php?route=product/product&product_id=${id}`,
-      brand: clean(card.querySelector(".stat-1 a")?.text ?? card.querySelector(".stat-1 span:last-child")?.text),
-      model: clean(card.querySelector(".stat-2 span:last-child")?.text),
-      name: clean(card.querySelector(".name a")?.text),
-      priceEur: priceFrom(card.querySelector(".price")),
+      productId,
+      url: `${LSTAR_BASE_URL}/products/${handle}-${str(card.defaultVariantPublicId)}`,
+      brand: str(card.manufacturerName),
+      // Model (вътрешният код) го няма в листинга на новия сайт – идва от
+      // продуктовата страница.
+      model: "",
+      name: str(card.name),
+      priceEur: num(card.minPrice) ?? num(card.defaultPrice),
     });
   }
 
-  return {
-    name,
-    total: totalMatch ? Number(totalMatch[1]) : null,
-    pages: pagesMatch ? Number(pagesMatch[1]) : null,
-    products,
-    loggedIn: isLoggedIn(root),
-  };
+  // "resultCount" и "pricesHidden" се срещат в няколко вложени обекта на
+  // страницата (sidebar, списък, layout), затова ги събираме поотделно.
+  let total: number | null = null;
+  let pricesHidden: boolean | null = null;
+  walkObjects(rows, (object) => {
+    if (total === null && typeof object.resultCount === "number") total = object.resultCount;
+    if (pricesHidden === null && typeof object.pricesHidden === "boolean") {
+      pricesHidden = object.pricesHidden;
+    }
+  });
+  // Сайтът крие цените от нелогнати клиенти – това е сигурният признак, че
+  // сесията е изтекла (или входът не е минал).
+  const loggedIn = pricesHidden !== true;
+
+  const heading = clean(parse(html).querySelector("#content h1, h1")?.text)
+    .replace(/\s*\(\d+\)\s*$/, "");
+  const name = heading;
+
+  const pages =
+    total !== null && products.length > 0 ? Math.max(1, Math.ceil(total / products.length)) : null;
+
+  return { name, total, pages, products, loggedIn };
 }
 
-function statValue(root: HTMLElement, cls: string): string {
-  return clean(root.querySelector(`.product-stats .${cls} span`)?.text);
+// ---- Продуктова страница ---------------------------------------------------------
+
+function isProductObject(o: JsonObject): boolean {
+  return typeof o.productHandle === "string" && Array.isArray(o.variants);
+}
+
+function specRowsOf(rows: unknown[]): Record<string, string> {
+  const holder = findObject(rows, (o) => Array.isArray(o.specRows));
+  const attributes: Record<string, string> = {};
+  if (!holder || !Array.isArray(holder.specRows)) return attributes;
+  for (const row of holder.specRows) {
+    if (typeof row !== "object" || row === null) continue;
+    const spec = row as JsonObject;
+    const label = clean(str(spec.label));
+    const values = Array.isArray(spec.values) ? spec.values.map((v) => clean(str(v))).filter(Boolean) : [];
+    if (label && values.length && !(label in attributes)) attributes[label] = values.join(", ");
+  }
+  return attributes;
+}
+
+function imagesOf(product: JsonObject): string[] {
+  const images: string[] = [];
+  const galleries = Array.isArray(product.galleryVariants) ? product.galleryVariants : [];
+  for (const gallery of galleries) {
+    if (typeof gallery !== "object" || gallery === null) continue;
+    const list = (gallery as JsonObject).images;
+    if (!Array.isArray(list)) continue;
+    for (const raw of list) {
+      const url = absoluteUrl(str(raw));
+      if (!url) continue;
+      // Само снимки от самия сайт – както досега.
+      if (!/^https:\/\/lstarbg\.com\/(uploads|image)\//.test(url)) continue;
+      if (!images.includes(url)) images.push(url);
+    }
+  }
+  return images;
 }
 
 export function parseProductPage(html: string): ProductPage {
-  const root = parse(html);
-  const priceGroup = root.querySelector(".product-price-group");
-
-  let priceEur: number | null = null;
-  if (priceGroup) {
-    const el =
-      priceGroup.querySelector(".product-price-new") ??
-      priceGroup.querySelector(".product-price");
-    priceEur = parsePriceEur(el?.text);
+  const rows = flightRows(html);
+  const product = findObject(rows, isProductObject);
+  if (!product) {
+    throw new Error("страницата не съдържа продукт (не е продуктова страница или сайтът е сменен)");
   }
 
-  const stock = root.querySelector(".product-stats .product-stock");
+  const variants = (product.variants as JsonObject[]).filter(
+    (v): v is JsonObject => typeof v === "object" && v !== null,
+  );
+  const main = variants[0] ?? {};
+
+  const priceRaw = num(main.salePrice) ?? num(main.price);
+  const vat = (product.vatCounterpart ?? {}) as JsonObject;
+  const basisRaw = str(vat.shownBasis);
+  const priceBasis: PriceBasis =
+    basisRaw === "inclusive" || basisRaw === "exclusive" ? basisRaw : "unknown";
+  const ratio = (vat.ratio ?? {}) as JsonObject;
+  const numerator = num(ratio.numerator);
+  const denominator = num(ratio.denominator);
+  const vatRatio =
+    numerator !== null && denominator !== null && denominator > 0 ? numerator / denominator : 1.2;
+
   let inStock: boolean | null = null;
-  if (stock) {
-    const cls = stock.getAttribute("class") ?? "";
-    if (/\bin-stock\b/.test(cls)) inStock = true;
-    else if (/\bout-of-stock\b/.test(cls)) inStock = false;
-    else {
-      const t = clean(stock.querySelector("span")?.text).toLowerCase();
-      inStock = t ? /^налич/.test(t) : null;
-    }
+  if (variants.length) {
+    inStock = variants.some(
+      (v) => v.availableForSale === true && (num(v.inStock) ?? 0) > 0,
+    );
   }
 
-  const images: string[] = [];
-  for (const img of root.querySelectorAll(".product-image .main-image .swiper-slide img")) {
-    const url = img.getAttribute("data-largeimg") || img.getAttribute("src") || "";
-    if (/^https:\/\/lstarbg\.com\/image\//.test(url) && !images.includes(url)) images.push(url);
-  }
-
-  const attributes: Record<string, string> = {};
-  for (const tr of root.querySelectorAll("#tab-specification tbody tr")) {
-    const cells = tr.querySelectorAll("td");
-    if (cells.length < 2) continue;
-    const key = clean(cells[0].text);
-    const value = clean(cells[1].text);
-    if (key && value && !(key in attributes)) attributes[key] = value;
-  }
-
-  // Темата слага случайни id-та на табовете („#product_tabs-6ad626…“), затова
-  // табът се намира по надписа си „Описание“, а не по id.
-  let description = "";
-  const descriptionTab = root.querySelectorAll("a").find((a) =>
-    /^#product_tabs-/.test(a.getAttribute("href") ?? "") && clean(a.text) === "Описание");
-  const paneId = descriptionTab?.getAttribute("href")?.slice(1);
-  if (paneId && /^[\w-]+$/.test(paneId)) {
-    description = clean(root.querySelector(`#${paneId}`)?.text).replace(/^\.+$/, "");
-  }
+  const manufacturer = (product.manufacturer ?? {}) as JsonObject;
+  const sku = str(product.mpn) || str(main.sku);
 
   return {
-    images,
-    attributes,
-    description,
-    name: clean(root.querySelector("#product h1, .product-details h1, h1")?.text),
-    brand: clean(root.querySelector(".product-manufacturer span")?.text),
-    model: statValue(root, "product-model"),
-    sku: statValue(root, "product-sku"),
-    priceEur,
+    name: clean(str(product.productName)),
+    brand: clean(str(manufacturer.name)),
+    model: clean(str(product.model)),
+    sku: clean(sku),
+    priceEur: priceRaw !== null && priceRaw > 0 ? priceRaw : null,
+    priceBasis,
+    vatRatio,
     inStock,
-    loggedIn: isLoggedIn(root),
+    // На продуктовата страница няма флаг pricesHidden – ако сесията е изтекла,
+    // цената просто липсва; core спира при категория без нито една цена.
+    loggedIn: true,
+    images: imagesOf(product),
+    attributes: specRowsOf(rows),
+    description: stripHtml(str(product.descriptionHtml) || "").slice(0, 3000),
   };
 }
 
