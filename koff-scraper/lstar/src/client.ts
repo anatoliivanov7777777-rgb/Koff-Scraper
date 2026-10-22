@@ -8,6 +8,10 @@ const USER_AGENT = "CaseKing-catalog-sync/1.0 (+https://case-king.bg)";
 const DEFAULT_INTERVAL_MS = 700;
 const RETRYABLE = new Set([429, 502, 503, 504]);
 const RETRY_DELAYS_MS = [1000, 2000, 4000];
+// A request that hangs is abandoned (and retried like a dropped connection).
+// Without it one stuck response held the nightly job until its 120-minute
+// limit (2026-10-22).
+const REQUEST_TIMEOUT_MS = 30_000;
 
 export interface LstarClientOptions {
   email: string;
@@ -66,7 +70,7 @@ export function createLstarClient(options: LstarClientOptions) {
       counters.requests++;
       let res: Response;
       try {
-        res = await fetchImpl(url, { ...init, method, headers, redirect: "manual" });
+        res = await fetchImpl(url, { ...init, method, headers, redirect: "manual", signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
       } catch (error) {
         if (method !== "GET" || attempt >= RETRY_DELAYS_MS.length) throw error;
         counters.retries++;

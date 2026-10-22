@@ -136,6 +136,8 @@ jobs:
       - name: Scrape lstarbg.com
         id: lstar_scrape
         continue-on-error: true
+        # Normally ~2 minutes; a stuck run must not eat the whole job.
+        timeout-minutes: 20
         working-directory: koff-scraper/lstar
         env:
           LSTAR_EMAIL: ${{ secrets.LSTAR_EMAIL }}
