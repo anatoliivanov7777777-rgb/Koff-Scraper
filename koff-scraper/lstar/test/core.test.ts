@@ -78,7 +78,7 @@ describe("scrapeLstar", () => {
   it("превръща показаните без ДДС цени в цени с ДДС", async () => {
     const { fetchText, resolveUrl } = fakeSite(site);
     const { rows, report } = await scrapeLstar({
-      fetchText, resolveUrl, categoryPaths: ["496_567", "496_569"], vatIncluded: "yes",
+      fetchText, resolveUrl, categoryPaths: ["496_567", "496_569"], vatIncluded: "unconfirmed",
     });
 
     // 11.80 x 1.2 = 14.16; 7.92 x 1.2 = 9.50; на страницата 8.08 x 1.2 = 9.70
@@ -88,6 +88,19 @@ describe("scrapeLstar", () => {
     expect(rows[2].note).toContain("НЯМА ЦЕНА");
     expect(rows[2].note).toContain("изчерпан");
     expect(rows[3].note).toContain("цена в листинга 9.50, на страницата 9.70");
+  });
+
+  it("LSTAR_PRICES_INCLUDE_VAT=yes оставя цените както са, каквото и да казва сайтът", async () => {
+    const { fetchText, resolveUrl } = fakeSite(site);
+    const { rows, report } = await scrapeLstar({
+      fetchText, resolveUrl, categoryPaths: ["496_567", "496_569"], vatIncluded: "yes",
+    });
+
+    // Собственикът (2026-10-19): цените на LStar са с ДДС. На 2026-10-23
+    // флагът "exclusive" на сайта ги беше вдигнал с още 20 %.
+    expect(rows.map((r) => r.price_eur)).toEqual(["11.80", "11.00", "", "7.92"]);
+    expect(report.priceBasis).toContain("LSTAR_PRICES_INCLUDE_VAT=yes");
+    expect(rows[3].note).toContain("цена в листинга 7.92, на страницата 8.08");
   });
 
   it("брои по категории и хваща дубликатите между тях", async () => {

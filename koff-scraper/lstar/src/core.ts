@@ -109,6 +109,13 @@ function categoryPageUrl(base: string, page: number): string {
 }
 
 
+/** "yes" = цените на сайта са с ДДС (не се пипат), "no" = без ДДС (x1.2), иначе каквото казва сайтът. */
+export function effectiveBasis(vatIncluded: VatFlag, siteBasis: PriceBasis): PriceBasis {
+  if (vatIncluded === "yes") return "inclusive";
+  if (vatIncluded === "no") return "exclusive";
+  return siteBasis;
+}
+
 export function formatPrice(value: number | null): string {
   return value === null ? "" : value.toFixed(2);
 }
@@ -219,8 +226,12 @@ export async function scrapeLstar(options: ScrapeOptions): Promise<{ rows: CsvRo
       // Цената се превръща в цена с ДДС на едно място – за листинга и за
       // продуктовата страница по един и същ множител.
       const vatRatio = page?.vatRatio ?? 1.2;
-      const listingPrice = priceWithVat(item.priceEur, siteBasis, vatRatio);
-      const pagePrice = priceWithVat(page?.priceEur ?? null, siteBasis, vatRatio);
+      // The owner's LSTAR_PRICES_INCLUDE_VAT wins over what the site says about
+      // itself: on 2026-10-23 the site's "exclusive" flag added 20 % on top of
+      // prices that already carried VAT (81 of 87 shop prices jumped 11-30 %).
+      const basis = effectiveBasis(vatIncluded, siteBasis);
+      const listingPrice = priceWithVat(item.priceEur, basis, vatRatio);
+      const pagePrice = priceWithVat(page?.priceEur ?? null, basis, vatRatio);
 
       let price = listingPrice;
       if (price === null && pagePrice !== null) {
@@ -303,8 +314,11 @@ export async function scrapeLstar(options: ScrapeOptions): Promise<{ rows: CsvRo
     throw new SessionLostError("нито един продукт няма цена - сайтът крие цените");
   }
 
+  const usedBasis = effectiveBasis(vatIncluded, siteBasis);
   const priceBasis =
-    siteBasis === "exclusive"
+    vatIncluded === "yes" || vatIncluded === "no"
+      ? `LSTAR_PRICES_INCLUDE_VAT=${vatIncluded} (собственикът); сайтът казва ${siteBasis}; ползвано: ${usedBasis}`
+      : siteBasis === "exclusive"
       ? "сайтът показва цените без ДДС; превърнати в цени с ДДС (x1.2)"
       : siteBasis === "inclusive"
         ? "сайтът показва цените с ДДС; непреобразувани"
