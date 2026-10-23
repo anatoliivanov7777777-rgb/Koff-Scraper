@@ -2,7 +2,7 @@
 //   LSTAR_EMAIL=... LSTAR_PASSWORD=... npm run scrape
 // Незадължително:
 //   LSTAR_PRICES_INCLUDE_VAT=yes|no|unconfirmed  (по подразбиране "yes" -
-//     потвърдено от собственика на 2026-10-19: цените на LStar са с ДДС)
+//     сайтът показва цените без ДДС, скрейпърът ги превръща в цени с ДДС)
 //   LSTAR_CATEGORY_PATHS=496_567,496_569,496_570
 //   OUT_DIR=.                          (къде да се запишат CSV и докладът)
 //
@@ -34,6 +34,7 @@ async function main() {
   await client.login();
   const { rows, products, report } = await scrapeLstar({
     fetchText: client.fetchText,
+    resolveUrl: client.resolveUrl,
     categoryPaths: paths,
     vatIncluded: vatFlag(process.env.LSTAR_PRICES_INCLUDE_VAT),
     log: console.log,

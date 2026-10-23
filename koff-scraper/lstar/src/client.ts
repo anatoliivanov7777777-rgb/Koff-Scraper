@@ -2,6 +2,18 @@
 // фиксирана пауза между заявките, повторение само на GET при 429/502/503/504
 // или скъсана връзка, спиране при 401/403. Без ротация на IP/UA, без
 // заобикаляне на защити. Паролата и бисквитките никога не се логват.
+//
+// От 21.10.2026 сайтът е Next.js:
+//   - входът е на /sign-in и е Next.js "server action" – обикновена multipart
+//     форма с имейл, парола и скрити полета $ACTION_REF_1, $ACTION_1:0,
+//     $ACTION_1:1, $ACTION_KEY. Полетата се взимат от самата страница при
+//     всяко влизане (не се зашиват в кода – сменят се при нов билд).
+//   - старият адрес /index.php?route=account/login вече дава 308 към /sign-in,
+//     а /index.php?route=account/account – 404.
+//   - логнат ли е клиентът, се проверява на /account: нелогнат получава
+//     307 към /sign-in?next=..., логнатият – 200.
+//   - старите адреси на категориите още пренасочват (308) към новите
+//     /categories/..., затова resolveUrl() ги превежда.
 
 const BASE_URL = "https://lstarbg.com";
 const USER_AGENT = "CaseKing-catalog-sync/1.0 (+https://case-king.bg)";
@@ -22,7 +34,94 @@ export interface LstarClientOptions {
   log?: (message: string) => void;
 }
 
+/** Скритите полета на формата за вход + адреса, на който се праща. */
+export interface LoginForm {
+  action: string;
+  fields: Record<string, string>;
+}
+
 const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+const HTML_ENTITIES: Record<string, string> = {
+  "&quot;": '"',
+  "&amp;": "&",
+  "&#39;": "'",
+  "&#x27;": "'",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&nbsp;": " ",
+};
+
+function unescapeHtml(value: string): string {
+  return value.replace(/&(quot|amp|#39|#x27|lt|gt|nbsp);/g, (m) => HTML_ENTITIES[m] ?? m);
+}
+
+/** Стойността на атрибут от HTML таг (работи и при разбъркан ред на атрибутите). */
+function attr(tag: string, name: string): string {
+  const re = new RegExp(`${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "i");
+  const m = re.exec(tag);
+  return m ? unescapeHtml(m[1] ?? m[2] ?? "") : "";
+}
+
+/**
+ * Изважда формата за вход от /sign-in: адрес за POST и скритите полета.
+ * Връща null, ако страницата не съдържа форма с парола (сайтът е сменен).
+ */
+export function parseLoginForm(html: string): LoginForm | null {
+  const forms = html.match(/<form[^>]*>[\s\S]*?<\/form>/gi) ?? [];
+  for (const form of forms) {
+    const open = /^<form[^>]*>/i.exec(form);
+    if (!open) continue;
+    const inputs = form.match(/<input[^>]*>/gi) ?? [];
+    const fields: Record<string, string> = {};
+    let hasPassword = false;
+    for (const input of inputs) {
+      const name = attr(input, "name");
+      if (!name) continue;
+      const type = (attr(input, "type") || "text").toLowerCase();
+      if (type === "password") hasPassword = true;
+      if (type === "hidden") fields[name] = attr(input, "value");
+    }
+    if (!hasPassword) continue;
+    const action = attr(open[0], "action");
+    return { action, fields };
+  }
+  return null;
+}
+
+/** Съобщението за грешка, което Next.js връща в скритото поле $ACTION_1:1. */
+export function loginErrorMessage(html: string): string | null {
+  for (const m of html.matchAll(/<input[^>]*name="\$ACTION_[^"]*:1"[^>]*>/gi)) {
+    try {
+      const state = JSON.parse(attr(m[0], "value")) as unknown;
+      const list = Array.isArray(state) ? state : [state];
+      for (const item of list) {
+        if (item && typeof item === "object" && "error" in item) {
+          const error = (item as { error?: unknown }).error;
+          if (typeof error === "string" && error.trim()) return error.trim();
+        }
+      }
+    } catch {
+      // полето не е JSON – продължаваме
+    }
+  }
+  return null;
+}
+
+/** multipart/form-data тяло, сглобено на ръка (без File обекти). */
+export function buildMultipart(
+  fields: Record<string, string>,
+  boundary: string,
+): string {
+  let body = "";
+  for (const [name, value] of Object.entries(fields)) {
+    body += `--${boundary}\r\n`;
+    body += `Content-Disposition: form-data; name="${name.replace(/"/g, "%22")}"\r\n\r\n`;
+    body += `${value}\r\n`;
+  }
+  body += `--${boundary}--\r\n`;
+  return body;
+}
 
 export function createLstarClient(options: LstarClientOptions) {
   const {
@@ -57,7 +156,12 @@ export function createLstarClient(options: LstarClientOptions) {
     lastStart = Date.now();
   }
 
-  async function send(url: string, init: RequestInit = {}, redirects = 0): Promise<Response> {
+  async function send(
+    url: string,
+    init: RequestInit = {},
+    redirects = 0,
+    followRedirects = true,
+  ): Promise<Response> {
     if (!url.startsWith(BASE_URL)) throw new Error("Заявка извън lstarbg.com е забранена");
     const method = (init.method ?? "GET").toUpperCase();
     const headers = new Headers(init.headers);
@@ -84,9 +188,9 @@ export function createLstarClient(options: LstarClientOptions) {
       }
       if (res.status >= 300 && res.status < 400) {
         const location = res.headers.get("location");
-        if (!location || redirects >= 5) return res;
+        if (!followRedirects || !location || redirects >= 5) return res;
         const next = new URL(location, url).toString();
-        return send(next, { headers: init.headers }, redirects + 1);
+        return send(next, { headers: init.headers }, redirects + 1, followRedirects);
       }
       if (method === "GET" && RETRYABLE.has(res.status) && attempt < RETRY_DELAYS_MS.length) {
         counters.retries++;
@@ -104,20 +208,72 @@ export function createLstarClient(options: LstarClientOptions) {
     return res.text();
   }
 
+  /**
+   * Крайният адрес след пренасочване (308), без да теглим тялото.
+   * Ползва се за старите адреси на категориите: index.php?...&path=496_567
+   * -> /categories/originalni-aksesoari/originalni-keysove.
+   */
+  async function resolveUrl(url: string): Promise<string> {
+    const res = await send(url, {}, 0, false);
+    const location = res.headers.get("location");
+    // Тялото не ни трябва – освобождаваме връзката.
+    try {
+      await res.body?.cancel();
+    } catch {
+      // вече е затворено
+    }
+    if (res.status >= 300 && res.status < 400 && location) {
+      return new URL(location, url).toString();
+    }
+    return url;
+  }
+
+  /** Логнат ли е клиентът според /account (200 = да, 3xx към /sign-in = не). */
+  async function isSignedIn(): Promise<boolean> {
+    const res = await send(`${BASE_URL}/account`, {}, 0, false);
+    try {
+      await res.body?.cancel();
+    } catch {
+      // вече е затворено
+    }
+    return res.ok;
+  }
+
   async function login(): Promise<void> {
-    await fetchText(`${BASE_URL}/index.php?route=account/login`); // взима сесийната бисквитка
-    const body = new URLSearchParams({ email, password });
-    await send(`${BASE_URL}/index.php?route=account/login`, {
+    // 1. Страницата за вход – от нея идват скритите полета на server action-а.
+    const page = await fetchText(`${BASE_URL}/sign-in`);
+    const form = parseLoginForm(page);
+    if (!form) {
+      throw new Error("Формата за вход на lstarbg.com не е намерена - сайтът може да е сменен");
+    }
+
+    // 2. Самият вход: multipart POST към същия адрес, както го прави браузърът
+    //    без JavaScript. Паролата отива само в тялото на заявката.
+    const boundary = `----CaseKingLstarForm${Date.now().toString(16)}`;
+    const body = buildMultipart({ ...form.fields, email, password }, boundary);
+    const action = new URL(form.action || "/sign-in", BASE_URL).toString();
+    const res = await send(action, {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
       body,
     });
-    const account = await fetchText(`${BASE_URL}/index.php?route=account/account`);
-    if (!/route=account\/logout/.test(account)) {
-      throw new Error("Входът в lstarbg.com не успя (провери LSTAR_EMAIL / LSTAR_PASSWORD)");
+    const result = await res.text();
+
+    // 3. Проверка по същество: /account вече трябва да е достъпен.
+    if (!(await isSignedIn())) {
+      const message = loginErrorMessage(result);
+      throw new Error(
+        `Входът в lstarbg.com не успя${message ? `: ${message}` : ""} (провери LSTAR_EMAIL / LSTAR_PASSWORD)`,
+      );
     }
     log(`Вход в lstarbg.com: успешен (бисквитки: ${jar.size})`);
   }
 
-  return { login, fetchText, getCounters: () => ({ ...counters }) };
+  return {
+    login,
+    fetchText,
+    resolveUrl,
+    isSignedIn,
+    getCounters: () => ({ ...counters }),
+  };
 }

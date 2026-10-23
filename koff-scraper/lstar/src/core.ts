@@ -8,15 +8,22 @@ import {
   isValidEan13,
   parseCategoryPage,
   parseProductPage,
+  priceWithVat,
   type ListingProduct,
+  type PriceBasis,
 } from "./parse.js";
 
 export const BASE_URL = "https://lstarbg.com";
 export const DEFAULT_CATEGORY_PATHS = ["496_567", "496_569", "496_570"];
-/** Максимумът, който OpenCart приема в "Покажи:" на този сайт. */
-const PAGE_LIMIT = 100;
+/**
+ * Сайтът показва цените без ДДС (vatCounterpart.shownBasis = "exclusive").
+ * Ако продуктова страница не се отвори и цената дойде само от листинга,
+ * ползваме този режим, за да не запишем чиста (без ДДС) цена като цена с ДДС.
+ */
+const DEFAULT_PRICE_BASIS: PriceBasis = "exclusive";
 /** Предпазител: никога повече от толкова страници на категория. */
 const MAX_PAGES = 50;
+
 
 export type VatFlag = "yes" | "no" | "unconfirmed";
 
@@ -65,6 +72,8 @@ export interface ScrapeReport {
   startedAt: string;
   finishedAt: string;
   vatIncluded: VatFlag;
+  /** Как сайтът показва цените и как са превърнати в цени с ДДС. */
+  priceBasis: string;
   categories: CategoryReport[];
   uniqueProducts: number;
   duplicatesAcrossCategories: number;
@@ -74,6 +83,8 @@ export interface ScrapeReport {
 
 export interface ScrapeOptions {
   fetchText: (url: string) => Promise<string>;
+  /** Превежда стар адрес през 308 пренасочването му (client.resolveUrl). */
+  resolveUrl?: (url: string) => Promise<string>;
   categoryPaths?: string[];
   vatIncluded?: VatFlag;
   log?: (message: string) => void;
@@ -87,9 +98,16 @@ export class SessionLostError extends Error {
   }
 }
 
-function categoryUrl(path: string, page: number): string {
-  return `${BASE_URL}/index.php?route=product/category&path=${path}&limit=${PAGE_LIMIT}&page=${page}`;
+/** Старият адрес на категорията; сайтът го пренасочва към новия /categories/... */
+function legacyCategoryUrl(path: string): string {
+  return `${BASE_URL}/index.php?route=product/category&path=${path}`;
 }
+
+/** Новият сайт показва по 50 продукта на страница: ?page=2, ?page=3... */
+function categoryPageUrl(base: string, page: number): string {
+  return page === 1 ? base : `${base}?page=${page}`;
+}
+
 
 export function formatPrice(value: number | null): string {
   return value === null ? "" : value.toFixed(2);
@@ -98,6 +116,7 @@ export function formatPrice(value: number | null): string {
 async function readCategory(
   path: string,
   fetchText: ScrapeOptions["fetchText"],
+  resolveUrl: (url: string) => Promise<string>,
   log: (m: string) => void
 ): Promise<{ name: string; declaredTotal: number | null; products: ListingProduct[] }> {
   const products: ListingProduct[] = [];
@@ -106,10 +125,18 @@ async function readCategory(
   let declaredTotal: number | null = null;
   let pages = 1;
 
+  // Старият адрес (496_567) се пренасочва към новия /categories/... – така
+  // не зависим от това как са кръстили категорията днес.
+  const base = (await resolveUrl(legacyCategoryUrl(path))).replace(/\/+$/, "");
+
   for (let page = 1; page <= Math.min(pages, MAX_PAGES); page++) {
-    const parsed = parseCategoryPage(await fetchText(categoryUrl(path, page)));
+    const url = categoryPageUrl(base, page);
+    const parsed = parseCategoryPage(await fetchText(url));
     if (!parsed.loggedIn) throw new SessionLostError(`категория ${path}, страница ${page}`);
     if (page === 1) {
+      if (parsed.products.length === 0 && parsed.total === null) {
+        throw new Error(`категория ${path}: страницата не върна продукти (${url}) - сайтът може да е сменен`);
+      }
       name = parsed.name;
       declaredTotal = parsed.total;
       pages = parsed.pages ?? 1;
@@ -122,7 +149,7 @@ async function readCategory(
       added++;
     }
     log(`  ${path} стр. ${page}/${pages}: +${added} продукта`);
-    if (added === 0) break; // OpenCart връща последната страница отново при page > max
+    if (added === 0) break;
   }
   return { name, declaredTotal, products };
 }
@@ -130,6 +157,7 @@ async function readCategory(
 export async function scrapeLstar(options: ScrapeOptions): Promise<{ rows: CsvRow[]; products: ScrapedProduct[]; report: ScrapeReport }> {
   const {
     fetchText,
+    resolveUrl = async (url: string) => url,
     categoryPaths = DEFAULT_CATEGORY_PATHS,
     vatIncluded = "unconfirmed",
     log = () => {},
@@ -144,10 +172,14 @@ export async function scrapeLstar(options: ScrapeOptions): Promise<{ rows: CsvRo
   let duplicates = 0;
   let productPageErrors = 0;
   let eanCount = 0;
+  let missingPriceTotal = 0;
+  // Режимът на цените (с/без ДДС) е един за целия сайт – взимаме го от първата
+  // продуктова страница и го ползваме и когато страница не се отвори.
+  let siteBasis: PriceBasis = DEFAULT_PRICE_BASIS;
 
   for (const path of categoryPaths) {
     log(`Категория ${path}`);
-    const { name, declaredTotal, products } = await readCategory(path, fetchText, log);
+    const { name, declaredTotal, products } = await readCategory(path, fetchText, resolveUrl, log);
     const report: CategoryReport = {
       path,
       name,
@@ -175,22 +207,32 @@ export async function scrapeLstar(options: ScrapeOptions): Promise<{ rows: CsvRo
       try {
         page = parseProductPage(await fetchText(item.url));
         if (!page.loggedIn) throw new SessionLostError(`продукт ${item.productId}`);
+        if (page.priceBasis === "inclusive" || page.priceBasis === "exclusive") {
+          siteBasis = page.priceBasis;
+        }
       } catch (error) {
         if (error instanceof SessionLostError) throw error;
         productPageErrors++;
         notes.push("продуктовата страница не се отвори");
       }
 
-      let price = item.priceEur;
-      if (price === null && page?.priceEur != null) {
-        price = page.priceEur;
+      // Цената се превръща в цена с ДДС на едно място – за листинга и за
+      // продуктовата страница по един и същ множител.
+      const vatRatio = page?.vatRatio ?? 1.2;
+      const listingPrice = priceWithVat(item.priceEur, siteBasis, vatRatio);
+      const pagePrice = priceWithVat(page?.priceEur ?? null, siteBasis, vatRatio);
+
+      let price = listingPrice;
+      if (price === null && pagePrice !== null) {
+        price = pagePrice;
         report.priceFilledFromProductPage++;
         notes.push("цена от продуктовата страница");
-      } else if (price !== null && page?.priceEur != null && Math.abs(price - page.priceEur) > 0.005) {
-        notes.push(`цена в листинга ${formatPrice(price)}, на страницата ${formatPrice(page.priceEur)}`);
+      } else if (price !== null && pagePrice !== null && Math.abs(price - pagePrice) > 0.005) {
+        notes.push(`цена в листинга ${formatPrice(price)}, на страницата ${formatPrice(pagePrice)}`);
       }
       if (price === null) {
         report.missingPriceEverywhere++;
+        missingPriceTotal++;
         notes.push("НЯМА ЦЕНА - нито в листинга, нито на продуктовата страница");
       }
 
@@ -211,7 +253,15 @@ export async function scrapeLstar(options: ScrapeOptions): Promise<{ rows: CsvRo
       }
 
       const pageSku = page?.sku ?? "";
-      const sku = pageSku || (kind === "manufacturer" ? model : "");
+      // Само истински код на производителя влиза в колоната "sku". Новият
+      // сайт дава като sku вътрешния номер на варианта (число) – той не е SKU
+      // и не бива да отива в магазина.
+      const sku =
+        /[A-Za-z]/.test(pageSku) && pageSku.length >= 3
+          ? pageSku
+          : kind === "manufacturer"
+            ? model
+            : "";
       if (!sku) notes.push("няма SKU на производителя");
 
       scraped.push({
@@ -246,6 +296,20 @@ export async function scrapeLstar(options: ScrapeOptions): Promise<{ rows: CsvRo
     log(`  → ${name}: ${report.scraped} продукта, без цена навсякъде: ${report.missingPriceEverywhere}`);
   }
 
+  // Ако нито един продукт няма цена, най-вероятно сайтът крие цените (сесията
+  // е изтекла или входът не е минал). По-добре да спрем, отколкото да запишем
+  // 200 продукта без цени.
+  if (scraped.length >= 5 && missingPriceTotal === scraped.length) {
+    throw new SessionLostError("нито един продукт няма цена - сайтът крие цените");
+  }
+
+  const priceBasis =
+    siteBasis === "exclusive"
+      ? "сайтът показва цените без ДДС; превърнати в цени с ДДС (x1.2)"
+      : siteBasis === "inclusive"
+        ? "сайтът показва цените с ДДС; непреобразувани"
+        : "сайтът не каза дали цените са с ДДС; оставени както са";
+
   return {
     rows,
     products: scraped,
@@ -253,6 +317,7 @@ export async function scrapeLstar(options: ScrapeOptions): Promise<{ rows: CsvRo
       startedAt,
       finishedAt: now().toISOString(),
       vatIncluded,
+      priceBasis,
       categories,
       uniqueProducts: rows.length,
       duplicatesAcrossCategories: duplicates,

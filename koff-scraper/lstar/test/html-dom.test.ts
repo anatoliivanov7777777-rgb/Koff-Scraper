@@ -17,21 +17,31 @@ async function loadViaDom() {
 
 const categories = [
   categoryHtml({
-    name: "Оригинални кейсове &amp; калъфи",
+    name: "Оригинални кейсове & калъфи",
     total: 93,
-    pages: 1,
     cards: [
-      { id: "36393", brand: "GUESS", model: "2334081", name: "GUESS HC MAGSAFE &quot;SW&quot; IP18", price: "€14.17" },
-      { id: "36391", brand: "KARL", model: "8809640730515", name: "KARL", price: null },
-      { id: "36390", brand: "KARL", model: "KLHMP18X", name: "KARL промо", price: null, special: { old: "€20.00", new: "€16.38" } },
+      { id: "36393", brand: "GUESS", handle: "3477-guess", variantPublicId: "95281488", price: 14.17 },
+      { id: "36391", brand: "KARL", handle: "8694-karl", variantPublicId: "29137439", price: null },
+      { id: "36390", brand: "KARL", handle: "3514-karl", variantPublicId: "63569432", price: null },
     ],
   }),
-  categoryHtml({ name: "x", total: 0, pages: 1, cards: [], loggedIn: false }),
+  categoryHtml({ name: "x", cards: [], loggedIn: false }),
 ];
 const products = [
-  productHtml({ name: "Кейс &amp; стъкло", model: "2334081", sku: "GUHMP18X6PWKSGTK" }),
-  productHtml({ name: "x", model: "8809640730515", price: null, inStock: false }),
-  productHtml({ name: "x", model: "1", special: { old: "€20.00", new: "€16.38" } }),
+  productHtml({
+    id: "36393", handle: "3477-guess", variantPublicId: "95281488",
+    name: "Кейс & стъкло", brand: "GUESS", model: "2334081", netPrice: 14.17,
+    specs: [{ label: "Марка", values: ["Guess"] }, { label: "Модел Телефон", values: ["iPhone 17", "iPhone 18"] }],
+    descriptionHtml: "<p>Кейс &amp; стъкло</p>",
+  }),
+  productHtml({
+    id: "2", handle: "k-2", variantPublicId: "102", name: "x", brand: "KARL",
+    model: "8809640730515", netPrice: null, inStock: 0, availableForSale: false,
+  }),
+  productHtml({
+    id: "3", handle: "k-3", variantPublicId: "103", name: "x", brand: "KARL",
+    model: "1", netPrice: 20, salePrice: 16.38, basis: "inclusive",
+  }),
 ];
 
 describe("DOMParser реализацията = node-html-parser", () => {
