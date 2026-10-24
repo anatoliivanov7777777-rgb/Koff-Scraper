@@ -10,12 +10,15 @@ import {
 } from "./koff-fulfillment-worker.mjs";
 import { createKoffClient } from "./koff-client.mjs";
 
-export const DEFAULT_MAX_ITEMS = 20;
-export const HARD_MAX_ITEMS = 50;
+// Owner, 2026-10-24: wholesale orders can have 300+ lines, so a run drains the
+// whole queue. HARD_MAX_ITEMS is only a guard against a runaway loop.
+export const HARD_MAX_ITEMS = 2000;
+export const DEFAULT_MAX_ITEMS = HARD_MAX_ITEMS;
 
 export function parseMaxItems(rawValue) {
   if (rawValue === undefined || rawValue === null || rawValue === "") return DEFAULT_MAX_ITEMS;
   const value = typeof rawValue === "string" ? rawValue.trim() : rawValue;
+  if (typeof value === "string" && value.toLowerCase() === "all") return DEFAULT_MAX_ITEMS;
   const n = Number(value);
   if (!Number.isInteger(n) || n <= 0) {
     throw new Error("KOFF_FULFILLMENT_MAX_ITEMS must be a positive integer");
