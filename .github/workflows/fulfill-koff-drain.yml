@@ -2,7 +2,8 @@ name: Koff fulfillment drain
 
 # Since 2026-10-06 the drain also runs on its own every 10 minutes (owner:
 # orders from the site must reach the Koff cart automatically). A scheduled run
-# is a live run with the default bound of 20 items; the manual run is unchanged.
+# is a live run that drains the whole queue (owner, 2026-10-24: wholesale
+# orders can have 300+ lines); the manual run can still set a smaller bound.
 # Both read the shop database's URL and secret - the same pair the daily
 # catalogue sync already uses successfully.
 on:
@@ -19,9 +20,9 @@ on:
           - 'false'
           - 'true'
       max_items:
-        description: 'Safety bound on how many fulfillments this run may process (max 50)'
+        description: 'How many order lines this run may process: all, or a number (max 2000)'
         required: false
-        default: '20'
+        default: 'all'
 
 permissions:
   contents: read
@@ -36,7 +37,7 @@ jobs:
   drain:
     if: ${{ github.event_name == 'schedule' || github.event.inputs.confirm_live == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 120
     defaults:
       run:
         working-directory: koff-scraper/scraper
@@ -54,5 +55,5 @@ jobs:
           CASEKING_CONVEX_URL: ${{ secrets.CASEKING_SYNC_CONVEX_URL }}
           CASEKING_SYNC_SECRET: ${{ secrets.CASEKING_SYNC_DEV_SECRET }}
           KOFF_CART_LIVE: 'true'
-          KOFF_FULFILLMENT_MAX_ITEMS: ${{ github.event.inputs.max_items || '20' }}
+          KOFF_FULFILLMENT_MAX_ITEMS: ${{ github.event.inputs.max_items || 'all' }}
         run: node koff-fulfillment-drain.mjs

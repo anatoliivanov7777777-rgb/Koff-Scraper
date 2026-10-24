@@ -90,7 +90,8 @@ test("invalid MAX_ITEMS: fails before the first worker call", async () => {
   assert.throws(() => parseMaxItems("-1"), /positive integer/);
   assert.throws(() => parseMaxItems("3.5"), /positive integer/);
   assert.throws(() => parseMaxItems("not a number"), /positive integer/);
-  assert.throws(() => parseMaxItems("51"), /must not exceed 50/);
+  assert.throws(() => parseMaxItems(`${HARD_MAX_ITEMS + 1}`), new RegExp(`must not exceed ${HARD_MAX_ITEMS}`));
+  assert.equal(parseMaxItems("all"), HARD_MAX_ITEMS);
   assert.equal(parseMaxItems(undefined), DEFAULT_MAX_ITEMS);
   assert.equal(parseMaxItems("20"), 20);
   assert.equal(parseMaxItems(`${HARD_MAX_ITEMS}`), HARD_MAX_ITEMS);
@@ -108,7 +109,7 @@ test("invalid MAX_ITEMS: fails before the first worker call", async () => {
 
   await assert.rejects(
     drainFulfillments({
-      caseKingClient: {}, koffClient: liveKoffClient, maxItems: 51,
+      caseKingClient: {}, koffClient: liveKoffClient, maxItems: HARD_MAX_ITEMS + 1,
       logger: silentLogger, runOneFulfillment,
     }),
     /Invalid maxItems/,
