@@ -45,6 +45,9 @@ jobs:
     timeout-minutes: 120
     defaults:
       run:
+        # Windows refuses unsigned PowerShell scripts by default, and npm is one
+        # (npm.ps1); this shell allows them for these steps only.
+        shell: powershell -NoProfile -ExecutionPolicy Bypass -Command "& '{0}'"
         working-directory: koff-scraper/scraper
     steps:
       - uses: actions/checkout@v4
@@ -52,7 +55,13 @@ jobs:
         with:
           node-version: "22"
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: |
+          npm install --no-audit --no-fund 2>&1 | Tee-Object -FilePath install.log
+          $rc = $LASTEXITCODE
+          if ($rc -ne 0) {
+            Get-Content install.log -Tail 15 | ForEach-Object { "::error::$_" }
+            exit $rc
+          }
       - name: Run Koff fulfillment drain (strictly sequential, bounded)
         env:
           KOFF_EMAIL: ${{ secrets.KOFF_EMAIL }}
@@ -62,4 +71,10 @@ jobs:
           KOFF_CART_LIVE: 'true'
           KOFF_BROWSER: "true"
           KOFF_FULFILLMENT_MAX_ITEMS: ${{ github.event.inputs.max_items || 'all' }}
-        run: node koff-fulfillment-drain.mjs
+        run: |
+          node koff-fulfillment-drain.mjs 2>&1 | Tee-Object -FilePath run.log
+          $rc = $LASTEXITCODE
+          if ($rc -ne 0) {
+            Get-Content run.log -Tail 15 | ForEach-Object { "::error::$_" }
+            exit $rc
+          }

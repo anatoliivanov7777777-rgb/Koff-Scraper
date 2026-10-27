@@ -74,6 +74,9 @@ jobs:
     timeout-minutes: 120
     defaults:
       run:
+        # Windows refuses unsigned PowerShell scripts by default, and npm is one
+        # (npm.ps1); this shell allows them for these steps only.
+        shell: powershell -NoProfile -ExecutionPolicy Bypass -Command "& '{0}'"
         working-directory: koff-scraper/scraper
     steps:
       - name: Checkout repository
@@ -85,7 +88,13 @@ jobs:
           node-version: "22"
 
       - name: Install scraper dependencies
-        run: npm install --no-audit --no-fund
+        run: |
+          npm install --no-audit --no-fund 2>&1 | Tee-Object -FilePath install.log
+          $rc = $LASTEXITCODE
+          if ($rc -ne 0) {
+            Get-Content install.log -Tail 15 | ForEach-Object { "::error::$_" }
+            exit $rc
+          }
 
       - name: Run koff.ro scraper (through Chrome on this computer)
         env:
@@ -101,7 +110,13 @@ jobs:
           ENABLE_GALLERY_FETCH: "true"
           KOFF_GALLERY_STATE_HTTP_URL: ${{ secrets.KOFF_GALLERY_STATE_HTTP_URL }}
           KOFF_GALLERY_STATE_SECRET: ${{ secrets.KOFF_GALLERY_STATE_SECRET }}
-        run: npm run scrape
+        run: |
+          npm run scrape 2>&1 | Tee-Object -FilePath scrape.log
+          $rc = $LASTEXITCODE
+          if ($rc -ne 0) {
+            Get-Content scrape.log -Tail 15 | ForEach-Object { "::error::$_" }
+            exit $rc
+          }
 
       - name: Hand the Koff catalogue to the sync job
         uses: actions/upload-artifact@v4
