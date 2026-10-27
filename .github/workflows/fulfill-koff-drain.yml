@@ -36,7 +36,12 @@ concurrency:
 jobs:
   drain:
     if: ${{ github.event_name == 'schedule' || github.event.inputs.confirm_live == 'true' }}
-    runs-on: ubuntu-latest
+    # Since 2026-10-27 Koff sits behind a Cloudflare check that only lets a
+    # real browser through, so this runs on the owner's computer (self-hosted
+    # runner, labels self-hosted/Windows/koff) and sends Koff requests through
+    # Chrome there (KOFF_BROWSER=true). Chrome opens only if there is an order
+    # line to add - an empty queue never touches Koff.
+    runs-on: [self-hosted, Windows, koff]
     timeout-minutes: 120
     defaults:
       run:
@@ -45,9 +50,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
       - name: Install dependencies
-        run: npm install
+        run: npm install --no-audit --no-fund
       - name: Run Koff fulfillment drain (strictly sequential, bounded)
         env:
           KOFF_EMAIL: ${{ secrets.KOFF_EMAIL }}
@@ -55,5 +60,6 @@ jobs:
           CASEKING_CONVEX_URL: ${{ secrets.CASEKING_SYNC_CONVEX_URL }}
           CASEKING_SYNC_SECRET: ${{ secrets.CASEKING_SYNC_DEV_SECRET }}
           KOFF_CART_LIVE: 'true'
+          KOFF_BROWSER: "true"
           KOFF_FULFILLMENT_MAX_ITEMS: ${{ github.event.inputs.max_items || 'all' }}
         run: node koff-fulfillment-drain.mjs

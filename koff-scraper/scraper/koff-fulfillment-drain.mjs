@@ -9,6 +9,7 @@ import {
   runOneFulfillment as realRunOneFulfillment,
 } from "./koff-fulfillment-worker.mjs";
 import { createKoffClient } from "./koff-client.mjs";
+import { resolveKoffFetch } from "./browser-fetch.mjs";
 
 // Owner, 2026-10-24: wholesale orders can have 300+ lines, so a run drains the
 // whole queue. HARD_MAX_ITEMS is only a guard against a runaway loop.
@@ -81,12 +82,21 @@ async function main() {
   }
   const maxItems = parseMaxItems(process.env.KOFF_FULFILLMENT_MAX_ITEMS);
   const caseKingClient = createCaseKingFulfillmentClient();
+  // KOFF_BROWSER=true: Koff requests go through a real Chrome window on this
+  // computer, opened only if a Koff request is actually made.
+  const koffFetch = resolveKoffFetch();
   const koffClient = createKoffClient({
     email: process.env.KOFF_EMAIL,
     password: process.env.KOFF_PASSWORD,
+    fetchImpl: koffFetch.fetch,
   });
 
-  const result = await drainFulfillments({ caseKingClient, koffClient, maxItems });
+  let result;
+  try {
+    result = await drainFulfillments({ caseKingClient, koffClient, maxItems });
+  } finally {
+    await koffFetch.close();
+  }
   const safeStop = result.status === "queue_empty" || result.status === "max_items_reached";
   process.exitCode = safeStop ? 0 : 1;
 }

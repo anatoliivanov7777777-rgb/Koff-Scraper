@@ -7,6 +7,7 @@ import { generateExports } from "./generate-exports.mjs";
 import { addVat, calcB2BPrice, calcB2CPrice } from "./pricing.mjs";
 import { mapToConvexProduct } from "./product-mapping.mjs";
 import { createKoffClient } from "./koff-client.mjs";
+import { resolveKoffFetch } from "./browser-fetch.mjs";
 import { fetchGalleriesBounded } from "./product-gallery.mjs";
 import { GALLERY_STATUS } from "./gallery-state.mjs";
 import { runIncrementalGalleryPass } from "./gallery-state-store.mjs";
@@ -95,7 +96,10 @@ if (ENABLE_GALLERY_FETCH) {
   }
 }
 
-const koffClient = createKoffClient({ email: KOFF_EMAIL, password: KOFF_PASSWORD });
+// KOFF_BROWSER=true: every Koff request goes through a real Chrome window on
+// this computer (see browser-fetch.mjs). Unset: plain fetch, as before.
+const koffFetch = resolveKoffFetch();
+const koffClient = createKoffClient({ email: KOFF_EMAIL, password: KOFF_PASSWORD, fetchImpl: koffFetch.fetch });
 
 async function getAllCategoryIds() {
   const res = await koffClient.request(`/api/category?_=${Date.now()}`);
@@ -387,7 +391,10 @@ async function main() {
   console.log("Готово!");
 }
 
-main().catch((err) => {
-  console.error("Скрейпърът гръмна:", err);
-  process.exit(1);
-});
+main()
+  .then(() => koffFetch.close())
+  .catch(async (err) => {
+    console.error("Скрейпърът гръмна:", err);
+    await koffFetch.close();
+    process.exit(1);
+  });
