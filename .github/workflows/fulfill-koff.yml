@@ -22,18 +22,32 @@ concurrency:
 jobs:
   fulfill:
     if: ${{ github.event.inputs.confirm_live == 'true' }}
-    runs-on: ubuntu-latest
+    # Since 2026-10-27 Koff sits behind a Cloudflare check that only lets a
+    # real browser through, so this runs on the owner's computer (self-hosted
+    # runner, labels self-hosted/Windows/koff) and sends Koff requests through
+    # Chrome there (KOFF_BROWSER=true). Chrome opens only if there is an order
+    # line to add - an empty queue never touches Koff.
+    runs-on: [self-hosted, Windows, koff]
     timeout-minutes: 10
     defaults:
       run:
+        # Windows refuses unsigned PowerShell scripts by default, and npm is one
+        # (npm.ps1); this shell allows them for these steps only.
+        shell: powershell -NoProfile -ExecutionPolicy Bypass -Command "& '{0}'"
         working-directory: koff-scraper/scraper
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
       - name: Install dependencies
-        run: npm install
+        run: |
+          npm install --no-audit --no-fund 2>&1 | Tee-Object -FilePath install.log
+          $rc = $LASTEXITCODE
+          if ($rc -ne 0) {
+            Get-Content install.log -Tail 15 | ForEach-Object { "::error::$_" }
+            exit $rc
+          }
       - name: Run Koff fulfillment worker (claims and processes exactly one fulfillment)
         env:
           KOFF_EMAIL: ${{ secrets.KOFF_EMAIL }}
@@ -41,4 +55,11 @@ jobs:
           CASEKING_CONVEX_URL: ${{ secrets.CASEKING_SYNC_CONVEX_URL }}
           CASEKING_SYNC_SECRET: ${{ secrets.CASEKING_SYNC_DEV_SECRET }}
           KOFF_CART_LIVE: 'true'
-        run: node koff-fulfillment-worker.mjs
+          KOFF_BROWSER: "true"
+        run: |
+          node koff-fulfillment-worker.mjs 2>&1 | Tee-Object -FilePath run.log
+          $rc = $LASTEXITCODE
+          if ($rc -ne 0) {
+            Get-Content run.log -Tail 15 | ForEach-Object { "::error::$_" }
+            exit $rc
+          }

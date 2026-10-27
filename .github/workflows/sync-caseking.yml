@@ -45,17 +45,94 @@ on:
           - 'true'
 
   schedule:
-    # Daily at 01:00 UTC (owner's instruction, 2026-10-01; was weekly, Sunday
-    # 03:00 UTC). One full run - scrape, sync and the stock-zero pass - takes
-    # about 8-11 minutes.
-    - cron: '0 1 * * *'
+    # Daily at 11:00 Bulgarian time (owner, 2026-10-27; was 01:00 UTC). The
+    # Koff part now runs on the owner's computer, which is on by then. GitHub
+    # counts in UTC: 09:00 UTC is 11:00 in winter (EET) and 12:00 in summer
+    # (EEST) - move it to 08:00 UTC when summer time starts. One full run takes
+    # about 11-16 minutes.
+    - cron: '0 9 * * *'
 
 concurrency:
   group: sync-caseking
   cancel-in-progress: false
 
 jobs:
+  # ---- Koff, from the owner's computer (owner, 2026-10-27) ----
+  # Since 2026-10-27 shop.koff.ro answers every non-browser client with a
+  # Cloudflare check (HTTP 403), from GitHub's servers and from the owner's home
+  # connection alike; Koff told the owner to carry on by his own means. A normal
+  # Chrome window on his computer passes by itself, so this job runs on the
+  # self-hosted runner installed there (labels: self-hosted, Windows, koff) and
+  # sends the Koff requests through that window (KOFF_BROWSER=true, see
+  # scraper/browser-fetch.mjs). Only the scrape runs there: the catalogue is
+  # handed to the sync job below as an artifact, and the shop's secrets stay in
+  # the cloud job.
+  #
+  # The computer must be on (and the runner running) at the scheduled time;
+  # otherwise this job waits in the queue and the sync job does LStar alone.
+  scrape-koff:
+    if: github.event.inputs.only_lstar != 'true'
+    runs-on: [self-hosted, Windows, koff]
+    timeout-minutes: 120
+    defaults:
+      run:
+        # Windows refuses unsigned PowerShell scripts by default, and npm is one
+        # (npm.ps1); this shell allows them for these steps only.
+        shell: powershell -NoProfile -ExecutionPolicy Bypass -Command "& '{0}'"
+        working-directory: koff-scraper/scraper
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install scraper dependencies
+        run: |
+          npm install --no-audit --no-fund 2>&1 | Tee-Object -FilePath install.log
+          $rc = $LASTEXITCODE
+          if ($rc -ne 0) {
+            Get-Content install.log -Tail 15 | ForEach-Object { "::error::$_" }
+            exit $rc
+          }
+
+      - name: Run koff.ro scraper (through Chrome on this computer)
+        env:
+          KOFF_BROWSER: "true"
+          KOFF_EMAIL: ${{ secrets.KOFF_EMAIL }}
+          KOFF_PASSWORD: ${{ secrets.KOFF_PASSWORD }}
+          # Incremental gallery pass. Durable state lives in the dedicated Koff
+          # Convex project and is reused every run, so only the candidates the
+          # planner selects receive a product-detail GET - an unchanged
+          # catalogue costs none. More than 500 candidates, or more than 2% of
+          # the catalogue, aborts detail fetching and requests nothing. A full
+          # refresh stays disabled: FULL_GALLERY_REFRESH is deliberately not set.
+          ENABLE_GALLERY_FETCH: "true"
+          KOFF_GALLERY_STATE_HTTP_URL: ${{ secrets.KOFF_GALLERY_STATE_HTTP_URL }}
+          KOFF_GALLERY_STATE_SECRET: ${{ secrets.KOFF_GALLERY_STATE_SECRET }}
+        run: |
+          npm run scrape 2>&1 | Tee-Object -FilePath scrape.log
+          $rc = $LASTEXITCODE
+          if ($rc -ne 0) {
+            Get-Content scrape.log -Tail 15 | ForEach-Object { "::error::$_" }
+            exit $rc
+          }
+
+      - name: Hand the Koff catalogue to the sync job
+        uses: actions/upload-artifact@v4
+        with:
+          name: koff-products-raw-${{ github.run_id }}
+          path: koff-scraper/scraper/koff-products-raw.json
+          if-no-files-found: error
+          retention-days: 3
+
   sync:
+    needs: scrape-koff
+    # Runs even when the Koff part failed or was skipped, so LStar still syncs;
+    # the Koff steps below run only after a successful Koff scrape.
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
@@ -70,9 +147,8 @@ jobs:
 
       # The dev sync has its OWN secret now (CASEKING_SYNC_DEV_SECRET), separate
       # from the shared CASEKING_SYNC_SECRET that the fulfillment workflows
-      # still carry for the old production deployment. Check it before the long
-      # scrape: an empty secret can only end in a failed sync, and this fails in
-      # seconds with the reason instead of after ~10 minutes of scraping.
+      # still carry for the old production deployment. Check it before the
+      # sync: an empty secret can only end in a failed sync.
       - name: Check the dev sync secret is configured
         env:
           CASEKING_SYNC_SECRET: ${{ secrets.CASEKING_SYNC_DEV_SECRET }}
@@ -83,29 +159,23 @@ jobs:
           fi
 
       - name: Install scraper dependencies
-        if: github.event.inputs.only_lstar != 'true'
+        if: needs.scrape-koff.result == 'success'
         working-directory: koff-scraper/scraper
         run: npm install
 
-      - name: Run koff.ro scraper
-        if: github.event.inputs.only_lstar != 'true'
-        working-directory: koff-scraper/scraper
-        env:
-          KOFF_EMAIL: ${{ secrets.KOFF_EMAIL }}
-          KOFF_PASSWORD: ${{ secrets.KOFF_PASSWORD }}
-          # Incremental gallery pass. Durable state lives in the dedicated Koff
-          # Convex project and is reused every run, so only the candidates the
-          # planner selects receive a product-detail GET - an unchanged
-          # catalogue costs none. More than 500 candidates, or more than 2% of
-          # the catalogue, aborts detail fetching and requests nothing. A full
-          # refresh stays disabled: FULL_GALLERY_REFRESH is deliberately not set.
-          ENABLE_GALLERY_FETCH: "true"
-          KOFF_GALLERY_STATE_HTTP_URL: ${{ secrets.KOFF_GALLERY_STATE_HTTP_URL }}
-          KOFF_GALLERY_STATE_SECRET: ${{ secrets.KOFF_GALLERY_STATE_SECRET }}
-        run: npm run scrape
+      - name: Take the Koff catalogue from the scrape job
+        if: needs.scrape-koff.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: koff-products-raw-${{ github.run_id }}
+          path: koff-scraper/scraper
+
+      - name: Report a failed Koff scrape
+        if: needs.scrape-koff.result == 'failure' || needs.scrape-koff.result == 'cancelled'
+        run: echo "::warning::The Koff scrape on the owner's computer did not finish (${{ needs.scrape-koff.result }}); Koff is not synced in this run. LStar continues."
 
       - name: Sync to CaseKing Convex
-        if: github.event.inputs.only_lstar != 'true'
+        if: needs.scrape-koff.result == 'success'
         working-directory: koff-scraper/scraper
         env:
           # Its OWN URL and secret, deliberately not the shared

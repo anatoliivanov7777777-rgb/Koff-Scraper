@@ -1,6 +1,7 @@
 import { ConvexHttpClient } from "convex/browser";
 import { pathToFileURL } from "node:url";
 import { createKoffClient, findCartProduct } from "./koff-client.mjs";
+import { resolveKoffFetch } from "./browser-fetch.mjs";
 
 // The live shop's database since the launch of the new case-king.bg
 // (2026-10-06): orders are placed there and their Koff lines wait there. The
@@ -172,11 +173,20 @@ async function main() {
     throw new Error("KOFF_CART_LIVE=true is required; no fulfillment was claimed");
   }
   const caseKingClient = createCaseKingFulfillmentClient();
+  // KOFF_BROWSER=true: Koff requests go through a real Chrome window on this
+  // computer, opened only if a Koff request is actually made.
+  const koffFetch = resolveKoffFetch();
   const koffClient = createKoffClient({
     email: process.env.KOFF_EMAIL,
     password: process.env.KOFF_PASSWORD,
+    fetchImpl: koffFetch.fetch,
   });
-  const result = await runOneFulfillment({ caseKingClient, koffClient });
+  let result;
+  try {
+    result = await runOneFulfillment({ caseKingClient, koffClient });
+  } finally {
+    await koffFetch.close();
+  }
   console.log(`Koff fulfillment worker finished with status: ${result.status}`);
 }
 
