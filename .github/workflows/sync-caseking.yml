@@ -45,12 +45,13 @@ on:
           - 'true'
 
   schedule:
-    # Daily at 11:00 Bulgarian time (owner, 2026-10-27; was 01:00 UTC). The
-    # Koff part now runs on the owner's computer, which is on by then. GitHub
-    # counts in UTC: 09:00 UTC is 11:00 in winter (EET) and 12:00 in summer
-    # (EEST) - move it to 08:00 UTC when summer time starts. One full run takes
-    # about 11-16 minutes.
-    - cron: '0 9 * * *'
+    # Daily at 07:00 Bulgarian time (owner, 2026-10-27; was 11:00). GitHub
+    # starts scheduled runs hours late (on 2026-10-27 the 11:00 run started at
+    # 17:04), so an early slot lands the sync around midday. The Koff job waits
+    # for the owner's computer (up to 24 h) if it is off when GitHub fires.
+    # GitHub counts in UTC: 05:00 UTC is 07:00 in winter (EET) and 08:00 in
+    # summer (EEST) - move it to 04:00 UTC when summer time starts.
+    - cron: '0 5 * * *'
 
 concurrency:
   group: sync-caseking
