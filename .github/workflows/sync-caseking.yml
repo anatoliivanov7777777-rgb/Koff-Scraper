@@ -82,6 +82,22 @@ jobs:
             exit 1
           fi
 
+      - name: Probe koff.ro access (diagnostic)
+        shell: bash
+        run: |
+          set +e
+          echo "::notice::runner ip $(curl -s -m 10 https://api.ipify.org)"
+          for ua in "default" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"; do
+            if [ "$ua" = "default" ]; then h=(); else h=(-A "$ua" -H "Accept: text/html,application/xhtml+xml" -H "Accept-Language: en-US,en;q=0.9"); fi
+            out=$(curl -s -m 20 -o body.html -D hdr.txt -w "%{http_code}" "${h[@]}" https://shop.koff.ro/en)
+            srv=$(grep -i -E "^(server|cf-ray|x-sucuri|x-cache|via|cf-mitigated|x-powered-by):" hdr.txt | tr -d '\r' | tr '\n' ' ')
+            title=$(grep -o -i "<title>[^<]*" body.html | head -1)
+            echo "::notice::curl ua=${ua:0:20} -> $out | $srv | $title"
+          done
+          node -e 'fetch("https://shop.koff.ro/en").then(async r=>{const t=await r.text();console.log("::notice::node-fetch ->",r.status,"|",r.headers.get("server"),"|",(t.match(/<title>[^<]*/i)||[""])[0])}).catch(e=>console.log("::notice::node-fetch error",e.message))'
+          node -e 'fetch("https://shop.koff.ro/en",{headers:{"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36","Accept":"text/html","Accept-Language":"en-US,en;q=0.9"}}).then(async r=>{const t=await r.text();console.log("::notice::node-fetch-browserUA ->",r.status,"|",(t.match(/<title>[^<]*/i)||[""])[0])}).catch(e=>console.log("::notice::node-fetch-UA error",e.message))'
+          exit 0
+
       - name: Install scraper dependencies
         if: github.event.inputs.only_lstar != 'true'
         working-directory: koff-scraper/scraper
