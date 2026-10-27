@@ -102,7 +102,15 @@ jobs:
           ENABLE_GALLERY_FETCH: "true"
           KOFF_GALLERY_STATE_HTTP_URL: ${{ secrets.KOFF_GALLERY_STATE_HTTP_URL }}
           KOFF_GALLERY_STATE_SECRET: ${{ secrets.KOFF_GALLERY_STATE_SECRET }}
-        run: npm run scrape
+        shell: bash
+        run: |
+          set +e
+          npm run scrape 2>&1 | tee scrape.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            tail -n 12 scrape.log | sed 's/^/::error::/'
+          fi
+          exit "$rc"
 
       - name: Sync to CaseKing Convex
         if: github.event.inputs.only_lstar != 'true'
