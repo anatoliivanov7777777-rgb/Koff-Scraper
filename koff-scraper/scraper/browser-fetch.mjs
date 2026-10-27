@@ -129,12 +129,26 @@ export function createBrowserFetch({
     await ensureOpen();
     const method = String(init.method || "GET").toUpperCase();
     const body = init.body === undefined || init.body === null ? undefined : String(init.body);
-    const result = await page.evaluate(pageFetch, {
-      path: target.pathname + target.search,
-      method,
-      headers: headersToObject(init.headers),
-      body,
-    });
+    let result;
+    try {
+      result = await page.evaluate(pageFetch, {
+        path: target.pathname + target.search,
+        method,
+        headers: headersToObject(init.headers),
+        body,
+      });
+    } catch (error) {
+      // The window went away under us (2026-10-27: Chrome updated itself right
+      // after a restart and closed the window seconds into the run). Drop it
+      // so the next request opens a fresh one, and report this request as a
+      // dropped connection: the client retries reads on that, never writes.
+      if (!/closed|crash|disconnected|Target/i.test(String(error?.message))) throw error;
+      logger.warn?.("Koff: прозорецът на браузъра се затвори - отварям нов при следващата заявка");
+      await close();
+      const dropped = new TypeError(`fetch failed (browser closed): ${error.message.split("\n")[0]}`);
+      dropped.cause = { code: "ECONNRESET" };
+      throw dropped;
+    }
     if (!result.ok) {
       // Same shape as a dropped connection, so the client's network-retry
       // policy for reads applies unchanged.
