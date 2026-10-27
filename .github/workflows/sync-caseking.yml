@@ -77,9 +77,11 @@ jobs:
     timeout-minutes: 120
     defaults:
       run:
-        # Windows refuses unsigned PowerShell scripts by default, and npm is one
-        # (npm.ps1); this shell allows them for these steps only.
-        shell: powershell -NoProfile -ExecutionPolicy Bypass -Command "& '{0}'"
+        # cmd, not PowerShell: PowerShell 5 swallows a program's error output
+        # (2026-10-27 a failed scrape left no message). Each command writes its
+        # whole output to a log file, prints it, and on failure repeats the last
+        # lines as ::error:: annotations so the reason shows on the run page.
+        shell: cmd
         working-directory: koff-scraper/scraper
     steps:
       - name: Checkout repository
@@ -92,12 +94,11 @@ jobs:
 
       - name: Install scraper dependencies
         run: |
-          npm install --no-audit --no-fund 2>&1 | Tee-Object -FilePath install.log
-          $rc = $LASTEXITCODE
-          if ($rc -ne 0) {
-            Get-Content install.log -Tail 15 | ForEach-Object { "::error::$_" }
-            exit $rc
-          }
+          call npm install --no-audit --no-fund > install.log 2>&1
+          set RC=%ERRORLEVEL%
+          type install.log
+          if not "%RC%"=="0" powershell -NoProfile -Command "Get-Content -Encoding UTF8 install.log -Tail 20 | ForEach-Object { '::error::' + $_ }"
+          exit /b %RC%
 
       - name: Run koff.ro scraper (through Chrome on this computer)
         env:
@@ -114,12 +115,11 @@ jobs:
           KOFF_GALLERY_STATE_HTTP_URL: ${{ secrets.KOFF_GALLERY_STATE_HTTP_URL }}
           KOFF_GALLERY_STATE_SECRET: ${{ secrets.KOFF_GALLERY_STATE_SECRET }}
         run: |
-          npm run scrape 2>&1 | Tee-Object -FilePath scrape.log
-          $rc = $LASTEXITCODE
-          if ($rc -ne 0) {
-            Get-Content scrape.log -Tail 15 | ForEach-Object { "::error::$_" }
-            exit $rc
-          }
+          node scrape.mjs > scrape.log 2>&1
+          set RC=%ERRORLEVEL%
+          type scrape.log
+          if not "%RC%"=="0" powershell -NoProfile -Command "Get-Content -Encoding UTF8 scrape.log -Tail 20 | ForEach-Object { '::error::' + $_ }"
+          exit /b %RC%
 
       - name: Hand the Koff catalogue to the sync job
         uses: actions/upload-artifact@v4

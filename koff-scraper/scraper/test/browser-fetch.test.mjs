@@ -95,3 +95,23 @@ test("204 responses carry no body", async () => {
   const res = await bf.fetch("https://shop.koff.ro/api/cart", { method: "DELETE" });
   assert.equal(res.status, 204);
 });
+
+test("a window that closes mid-run is reopened and the read is retried", async () => {
+  let n = 0;
+  const b = fakeBrowser({ handler: () => { n++; if (n === 1) throw new Error("page.evaluate: Target page, context or browser has been closed"); return { ok: true, status: 200, statusText: "OK", headers: [], text: "[2]" }; } });
+  const bf = createBrowserFetch({ launch: b.launch, logger: quiet });
+  const client = createKoffClient({ email: "e", password: "p", fetchImpl: bf.fetch, logger: quiet, sleep: async () => {}, minRequestIntervalMs: 0 });
+  const res = await client.request("/api/category");
+  assert.equal(res.status, 200);
+  assert.equal(b.calls.launches.length, 2);
+  assert.equal(b.calls.closed, 1);
+});
+
+test("a window that closes during a write is not retried", async () => {
+  let n = 0;
+  const b = fakeBrowser({ handler: () => { n++; throw new Error("Target closed"); } });
+  const bf = createBrowserFetch({ launch: b.launch, logger: quiet });
+  const client = createKoffClient({ email: "e", password: "p", fetchImpl: bf.fetch, logger: quiet, sleep: async () => {}, minRequestIntervalMs: 0 });
+  await assert.rejects(() => client.request("/api/cart", { method: "POST", body: "{}" }), /browser closed/);
+  assert.equal(n, 1);
+});
