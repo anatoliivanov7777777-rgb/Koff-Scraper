@@ -74,7 +74,11 @@ jobs:
   scrape-koff:
     if: github.event.inputs.only_lstar != 'true'
     runs-on: [self-hosted, Windows, koff]
-    timeout-minutes: 120
+    # A normal scrape takes about 10 minutes (2026-11-02: 9 min). 45 leaves room
+    # for retries, but a stuck run no longer holds the owner's computer for 2
+    # hours: the Koff order drain runs on the same runner and waits meanwhile
+    # (2026-11-03 a stuck scrape blocked it from 12:40 to 14:41).
+    timeout-minutes: 45
     defaults:
       run:
         # cmd, not PowerShell: PowerShell 5 swallows a program's error output

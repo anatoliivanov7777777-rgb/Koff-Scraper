@@ -115,3 +115,43 @@ test("a window that closes during a write is not retried", async () => {
   await assert.rejects(() => client.request("/api/cart", { method: "POST", body: "{}" }), /browser closed/);
   assert.equal(n, 1);
 });
+
+test("a request that never returns is cut off, the window reopened and the read retried", async () => {
+  let n = 0;
+  const b = fakeBrowser({ handler: () => { n++; if (n === 1) return new Promise(() => {}); return { ok: true, status: 200, statusText: "OK", headers: [], text: "[3]" }; } });
+  const bf = createBrowserFetch({ launch: b.launch, logger: quiet, requestTimeoutMs: 20 });
+  const client = createKoffClient({ email: "e", password: "p", fetchImpl: bf.fetch, logger: quiet, sleep: async () => {}, minRequestIntervalMs: 0 });
+  const res = await client.request("/api/category");
+  assert.equal(res.status, 200);
+  assert.equal(n, 2);
+  assert.equal(b.calls.launches.length, 2);
+  assert.equal(b.calls.closed, 1);
+});
+
+test("a write that never returns fails and is not retried", async () => {
+  let n = 0;
+  const b = fakeBrowser({ handler: () => { n++; return new Promise(() => {}); } });
+  const bf = createBrowserFetch({ launch: b.launch, logger: quiet, requestTimeoutMs: 20 });
+  const client = createKoffClient({ email: "e", password: "p", fetchImpl: bf.fetch, logger: quiet, sleep: async () => {}, minRequestIntervalMs: 0 });
+  await assert.rejects(() => client.request("/api/cart", { method: "POST", body: "{}" }), /browser timeout/);
+  assert.equal(n, 1);
+});
+
+test("a browser whose close() hangs does not block the run", async () => {
+  let n = 0;
+  const page = {
+    async goto() {}, async waitForSelector() {}, async title() { return "Koff"; },
+    async evaluate() { n++; if (n === 1) throw new Error("Target closed"); return { ok: true, status: 200, statusText: "OK", headers: [], text: "[]" }; },
+  };
+  const launch = async () => ({ newPage: async () => page, close: () => new Promise(() => {}) });
+  const bf = createBrowserFetch({ launch, logger: quiet, closeTimeoutMs: 20 });
+  const client = createKoffClient({ email: "e", password: "p", fetchImpl: bf.fetch, logger: quiet, sleep: async () => {}, minRequestIntervalMs: 0 });
+  const res = await client.request("/api/category");
+  assert.equal(res.status, 200);
+});
+
+test("a browser that never opens a tab fails instead of hanging", async () => {
+  const launch = async () => ({ newPage: () => new Promise(() => {}), close: async () => {} });
+  const bf = createBrowserFetch({ launch, logger: quiet, launchTimeoutMs: 20 });
+  await assert.rejects(() => bf.fetch("https://shop.koff.ro/en"), /did not finish/);
+});

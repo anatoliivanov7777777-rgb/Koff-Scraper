@@ -23,11 +23,36 @@
 
 const DEFAULT_BASE_URL = "https://shop.koff.ro";
 const DEFAULT_READY_TIMEOUT_MS = 60_000;
+// One Koff request through the window may take at most this long (owner,
+// 2026-11-03: the window closed mid-crawl, a request then never returned and
+// the scrape sat silent until the job's 2-hour limit cancelled it). On expiry
+// the window is dropped and the request fails like a dropped connection, so
+// reads are retried in a fresh window and writes are not retried.
+const DEFAULT_REQUEST_TIMEOUT_MS = 90_000;
+// Opening a new window / closing a dead one must not hang either.
+const DEFAULT_LAUNCH_TIMEOUT_MS = 90_000;
+const DEFAULT_CLOSE_TIMEOUT_MS = 15_000;
 const DEFAULT_CHANNELS = ["chrome", "msedge"];
 const DROPPED_REQUEST_HEADERS = new Set(["cookie", "host", "content-length", "connection"]);
 const NULL_BODY_STATUSES = new Set([101, 204, 205, 304]);
 
 export class KoffBrowserError extends Error {}
+
+class TimeoutError extends Error {}
+
+// Races a promise against a timer; the timer is cleared either way.
+function withTimeout(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new TimeoutError(`${label} did not finish within ${Math.round(ms / 1000)}s`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+function positiveIntFromEnv(name, fallback, env = process.env) {
+  const value = Number.parseInt(env[name] ?? "", 10);
+  return Number.isInteger(value) && value > 0 ? value : fallback;
+}
 
 export function isBrowserFetchEnabled(env = process.env) {
   return String(env.KOFF_BROWSER || "").toLowerCase() === "true";
@@ -75,6 +100,9 @@ export function createBrowserFetch({
   baseUrl = DEFAULT_BASE_URL,
   channels = DEFAULT_CHANNELS,
   readyTimeoutMs = DEFAULT_READY_TIMEOUT_MS,
+  requestTimeoutMs = positiveIntFromEnv("KOFF_BROWSER_REQUEST_TIMEOUT_MS", DEFAULT_REQUEST_TIMEOUT_MS),
+  launchTimeoutMs = DEFAULT_LAUNCH_TIMEOUT_MS,
+  closeTimeoutMs = DEFAULT_CLOSE_TIMEOUT_MS,
   launch = defaultLaunch,
   logger = console,
 } = {}) {
@@ -88,7 +116,7 @@ export function createBrowserFetch({
     let lastError = null;
     for (const channel of channels) {
       try {
-        browser = await launch({ channel, args });
+        browser = await withTimeout(launch({ channel, args }), launchTimeoutMs, "Starting the browser");
         logger.info?.(`Koff: отворих браузър (${channel}) за заявките към Koff`);
         break;
       } catch (error) {
@@ -101,7 +129,7 @@ export function createBrowserFetch({
         `Не успях да отворя Chrome или Edge за Koff: ${lastError?.message?.split("\n")[0] ?? "няма браузър"}`
       );
     }
-    page = await browser.newPage();
+    page = await withTimeout(browser.newPage(), launchTimeoutMs, "Opening a browser tab");
     await page.goto(`${origin}/en`, { waitUntil: "domcontentloaded", timeout: readyTimeoutMs });
     try {
       // The shop's own page carries this tag; the Cloudflare check page does not.
@@ -117,7 +145,13 @@ export function createBrowserFetch({
 
   async function ensureOpen() {
     if (page) return;
-    if (!opening) opening = open().catch((error) => { opening = null; throw error; });
+    if (!opening) {
+      opening = open().catch(async (error) => {
+        // A half-opened window must not linger (or block the next attempt).
+        await close();
+        throw error;
+      });
+    }
     await opening;
   }
 
@@ -131,13 +165,26 @@ export function createBrowserFetch({
     const body = init.body === undefined || init.body === null ? undefined : String(init.body);
     let result;
     try {
-      result = await page.evaluate(pageFetch, {
-        path: target.pathname + target.search,
-        method,
-        headers: headersToObject(init.headers),
-        body,
-      });
+      result = await withTimeout(
+        page.evaluate(pageFetch, {
+          path: target.pathname + target.search,
+          method,
+          headers: headersToObject(init.headers),
+          body,
+        }),
+        requestTimeoutMs,
+        `Koff ${method} ${target.pathname}`
+      );
     } catch (error) {
+      if (error instanceof TimeoutError) {
+        // The window stopped answering. Drop it and report a dropped
+        // connection: reads are retried in a fresh window, writes are not.
+        logger.warn?.(`Koff: заявката не отговори (${error.message}) - затварям прозореца и отварям нов`);
+        await close();
+        const dropped = new TypeError(`fetch failed (browser timeout): ${error.message}`);
+        dropped.cause = { code: "ECONNRESET" };
+        throw dropped;
+      }
       // The window went away under us (2026-10-27: Chrome updated itself right
       // after a restart and closed the window seconds into the run). Drop it
       // so the next request opens a fresh one, and report this request as a
@@ -169,7 +216,8 @@ export function createBrowserFetch({
     browser = null;
     page = null;
     opening = null;
-    if (current) await current.close().catch(() => {});
+    // A dead browser can leave close() pending forever - never wait on it long.
+    if (current) await withTimeout(Promise.resolve().then(() => current.close()), closeTimeoutMs, "Closing the browser").catch(() => {});
   }
 
   return { fetch: browserFetch, close };
