@@ -261,3 +261,69 @@ jobs:
             koff-scraper/lstar/out/lstar-products-priced.csv
           if-no-files-found: ignore
           retention-days: 14
+
+      # ---- Omax (b2b.omax.bg), the fifth supplier (owner, 2026-11-05) ----
+      # Same two locks as LStar: the repository VARIABLE OMAX_SYNC_ENABLED must
+      # be exactly "true", otherwise every Omax run is a DRY RUN; and the shop
+      # backend must have the omaxSync module deployed.
+      # The state folder (product-page cache + snapshot of the last live run)
+      # is kept between runs with actions/cache, so a run sends Convex only the
+      # new and changed products and zeroes the sold-out ones by key.
+      - name: Install Omax scraper dependencies
+        continue-on-error: true
+        working-directory: koff-scraper/omax
+        run: npm ci
+
+      - name: Restore the Omax state
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: koff-scraper/omax/state
+          key: omax-state-${{ github.run_id }}
+          restore-keys: omax-state-
+
+      - name: Scrape b2b.omax.bg
+        id: omax_scrape
+        continue-on-error: true
+        timeout-minutes: 45
+        working-directory: koff-scraper/omax
+        env:
+          OMAX_EMAIL: ${{ secrets.OMAX_EMAIL }}
+          OMAX_PASSWORD: ${{ secrets.OMAX_PASSWORD }}
+          OUT_DIR: out
+          STATE_DIR: state
+        run: npm run scrape
+
+      - name: Sync Omax to CaseKing Convex
+        id: omax_sync
+        if: steps.omax_scrape.outcome == 'success'
+        continue-on-error: true
+        working-directory: koff-scraper/omax
+        env:
+          CASEKING_CONVEX_URL: ${{ secrets.CASEKING_SYNC_CONVEX_URL }}
+          CASEKING_SYNC_SECRET: ${{ secrets.CASEKING_SYNC_DEV_SECRET }}
+          LIVE: ${{ vars.OMAX_SYNC_ENABLED == 'true' && (github.event.inputs.live || 'true') == 'true' && 'true' || 'false' }}
+          IN_FILE: out/omax-products.json
+          OUT_DIR: out
+          STATE_DIR: state
+        run: npm run sync
+
+      - name: Save the Omax state
+        if: steps.omax_scrape.outcome == 'success'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: koff-scraper/omax/state
+          key: omax-state-${{ github.run_id }}
+
+      - name: Upload the Omax report
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: omax-sync-${{ github.run_id }}
+          path: |
+            koff-scraper/omax/out/omax-sync-report.json
+            koff-scraper/omax/out/omax-products.json
+          if-no-files-found: ignore
+          retention-days: 14

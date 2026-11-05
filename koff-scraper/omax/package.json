@@ -1,0 +1,27 @@
+{
+  "name": "omax-scraper",
+  "version": "1.0.0",
+  "description": "Скрейпър за B2B портала b2b.omax.bg → магазина CaseKing",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "scrape": "tsx src/cli.ts",
+    "sync": "tsx src/sync.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "convex": "^1.47.0",
+    "node-html-parser": "^9.0.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
