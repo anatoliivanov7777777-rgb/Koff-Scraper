@@ -110,6 +110,13 @@ export async function runSync(
   const keep = new Set(scraped.deferred.map((id) => `${OMAX_SOURCE_KEY_PREFIX}${id}`));
   const full = needsFullResend(snapshot, now, Boolean(options.full));
   const { send, gone } = planDiff(rows, snapshot, keep, full);
+  // Примери в лога (по 3 от категория) - за преглед на имената и цените без сваляне на файлове.
+  const perCategory: Record<string, number> = {};
+  for (const r of rows) {
+    perCategory[r.category] = (perCategory[r.category] ?? 0) + 1;
+    if (perCategory[r.category] <= 3) log(`  пример [${r.category}] ${r.proposedName} | ${r.brand} / ${r.model} | доставка ${r.costPrice} € → ${r.priceB2C} € (B2B ${r.priceB2B} €)`);
+  }
+  log(`По категории: ${JSON.stringify(perCategory)}`);
   log(`Режим: ${dryRun ? "DRY RUN (нищо не се записва)" : "LIVE"}; редове: ${rows.length}, за пращане: ${send.length}${full ? " (пълно)" : ""}, прескочени: ${JSON.stringify(skipped)}`);
 
   const totals = { created: 0, changed: 0, unchanged: 0, foreign: 0, eanViaCode: 0, koffNamed: 0 };
