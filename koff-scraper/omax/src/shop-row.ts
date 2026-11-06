@@ -51,6 +51,7 @@ export interface ShopRow {
   brand: string;
   model: string;
   compat: { brand: string; model: string }[];
+  previousName?: string;
 }
 
 export type BuildResult = { row: ShopRow } | { skip: string };
@@ -118,17 +119,34 @@ function seriesOf(title: string, kind: Kind): string {
   return [series, extra].join(" ").replace(/\s+/g, " ").trim();
 }
 
-function deviceLabel(d: Device): string {
+// Телефонът в името - същото правило като deviceName/phoneDevice на магазина
+// (convex/catalogNaming.ts), за да изглеждат имената като останалите:
+// "Samsung Galaxy S26 Ultra", "Xiaomi Redmi 9C", "Motorola Edge 70", "iPhone 16".
+const SAMSUNG_GALAXY = /^(S\d|A\d|M\d|F\d|Z |Note|Tab|XCover|Xcover)/i;
+export function deviceLabel(d: Device): string {
+  const m = d.model.trim();
+  if (d.brand === "Apple") return /^(iPhone|iPad|AirPods|Mac)/.test(m) ? m : `Apple ${m}`;
+  if (d.brand === "Samsung") {
+    if (m.toLowerCase().startsWith("galaxy")) return `Samsung ${m}`;
+    return SAMSUNG_GALAXY.test(m) ? `Samsung Galaxy ${m}` : `Samsung ${m}`;
+  }
+  if (d.brand === "MOTO") return `Motorola ${m.replace(/^(Motorola|MOTO)\s+/i, "")}`;
+  if (m.toLowerCase().startsWith(d.brand.toLowerCase())) return m;
+  return `${d.brand} ${m}`;
+}
+
+/** Старото изписване (до 06.11.2026) - само за да се разпознае и преименува старо име. */
+function legacyDeviceLabel(d: Device): string {
   if (d.brand === "Samsung" && !/^galaxy/i.test(d.model)) return `Samsung ${d.model}`;
   if (["Apple", "Xiaomi", "MOTO", "Google"].includes(d.brand)) return d.model;
   return `${d.brand} ${d.model}`;
 }
 
-export function proposedName(title: string, kind: Kind, devices: Device[]): string {
+export function proposedName(title: string, kind: Kind, devices: Device[], label: (d: Device) => string = deviceLabel): string {
   const colour = colourOf(title);
   if (PHONE_KINDS.has(kind)) {
     const series = seriesOf(title, kind);
-    const name = `${TYPE_WORDS[kind]} ${series} за ${deviceLabel(devices[0])}`.replace(/\s+/g, " ").trim();
+    const name = `${TYPE_WORDS[kind]} ${series} за ${label(devices[0])}`.replace(/\s+/g, " ").trim();
     return colour ? `${name} - ${colour}` : name;
   }
   // Зарядни, кабели, авто: заглавието на Omax без кода в края, с българския тип
@@ -159,13 +177,15 @@ export function buildShopRow(p: ScrapedProduct, index: ModelIndex): BuildResult 
   const devices = isPhone ? devicesFor(p.name, index) : [];
   if (isPhone && devices.length === 0) return { skip: "телефонът не е в магазина" };
   const primary = devices[0];
+  const name = proposedName(p.name, kind, devices);
+  const legacy = isPhone ? proposedName(p.name, kind, devices, legacyDeviceLabel) : name;
 
   return {
     row: {
       sourceKey: `${OMAX_SOURCE_KEY_PREFIX}${p.productId}`,
       sourceProductId: p.productId,
       supplierName: p.name,
-      proposedName: proposedName(p.name, kind, devices),
+      proposedName: name,
       description: p.description,
       supplierCategory: p.categoryPath,
       supplierUrl: `${BASE_URL}${p.href.startsWith("/") ? "" : "/"}${p.href}`,
@@ -182,6 +202,7 @@ export function buildShopRow(p: ScrapedProduct, index: ModelIndex): BuildResult 
       brand: isPhone ? primary.brand : (maker || ALL_BRANDS),
       model: isPhone ? primary.model : MODEL_LESS,
       compat: devices.slice(1).map((d) => ({ brand: d.brand, model: d.model })),
+      ...(legacy !== name ? { previousName: legacy } : {}),
     },
   };
 }
