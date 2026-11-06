@@ -1,0 +1,77 @@
+name: Scrape b2b.omax.bg (manual, dry run)
+
+# Manual-only (workflow_dispatch, no schedule).
+#
+# What it does and does not touch:
+#   - logs in to b2b.omax.bg with OMAX_EMAIL / OMAX_PASSWORD (GitHub Secrets)
+#     and READS the chosen categories and the product pages
+#   - runs the shop sync as a DRY RUN (LIVE is never set here): Convex only
+#     reports what it would create, change and zero - nothing is written
+#   - does NOT touch the Omax cart, the shop data or the Koff/LStar scrapers
+#   - runs tsc + vitest first; a red check stops the scrape
+on:
+  workflow_dispatch:
+    inputs:
+      detail_cap:
+        description: 'Колко продуктови страници най-много (по подразбиране 1500)'
+        required: false
+        default: '1500'
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: koff-scraper/omax
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        run: npm ci
+      - name: Type check
+        run: npm run typecheck
+      - name: Tests
+        run: npm test
+      - name: Restore the Omax state
+        uses: actions/cache/restore@v4
+        with:
+          path: koff-scraper/omax/state
+          key: omax-state-${{ github.run_id }}
+          restore-keys: omax-state-
+      - name: Scrape
+        id: scrape
+        env:
+          OMAX_EMAIL: ${{ secrets.OMAX_EMAIL }}
+          OMAX_PASSWORD: ${{ secrets.OMAX_PASSWORD }}
+          DETAIL_CAP: ${{ github.event.inputs.detail_cap }}
+          OUT_DIR: out
+          STATE_DIR: state
+        run: npm run scrape
+      - name: Dry-run sync (nothing is written)
+        env:
+          CASEKING_CONVEX_URL: ${{ secrets.CASEKING_SYNC_CONVEX_URL }}
+          CASEKING_SYNC_SECRET: ${{ secrets.CASEKING_SYNC_DEV_SECRET }}
+          LIVE: "false"
+          IN_FILE: out/omax-products.json
+          OUT_DIR: out
+          STATE_DIR: state
+        run: npm run sync
+      # The product-page cache is saved so the nightly run does not read the
+      # same pages again (the snapshot is untouched by a dry run).
+      - name: Save the Omax state
+        if: always() && steps.scrape.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: koff-scraper/omax/state
+          key: omax-state-${{ github.run_id }}
+      - name: Upload products + report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: omax-catalog-${{ github.run_id }}
+          path: koff-scraper/omax/out/
+          if-no-files-found: ignore
+          retention-days: 14
