@@ -28,6 +28,8 @@ describe("phone models from Omax titles", () => {
     ["Калъф Carbon Xiaomi RedMi Note 12 5G/Poco X5 5G /черен/ NORDIC", ["Xiaomi:Redmi Note 12 5G", "Xiaomi:Poco X5 5G"]],
     ["BOTER Калъф MagSafe + MagPopsocket Xiaomi RedMi 9C/RedMi 10A /AstroGolfer/", ["Xiaomi:Redmi 9C", "Xiaomi:Redmi 10A"]],
     ["Калъф Air Defender Xiaomi RedMi Note 9s/Note 9 Pro /прозрачен/", ["Xiaomi:Redmi Note 9S", "Xiaomi:Redmi Note 9 Pro"]],
+    ["SAMSUNG Калъф Samsung S26 FE, Clear Cover /прозрачен/ - EF-QS948CTEGWW", ["Samsung:S26 FE"]],
+    ["SAMSUNG Калъф Samsung S26 Ultra, Silicone Cover /черен/ - EF-ES948CBEGWW", ["Samsung:S26 Ultra"]],
     ["Калъф Business CARBON Xiaomi 13 Pro /черен/", ["Xiaomi:Xiaomi 13 Pro"]],
     ["Калъф Silicone Matt Xiaomi RedMi A7 Pro 4G /тъмно зелен/", ["Xiaomi:Redmi A7 Pro 4G"]],
     ["Camera Tempered Glass Motorola Moto G50 5G", ["MOTO:Moto G50 5G"]],
