@@ -35,6 +35,7 @@ import { buildShopRow, OMAX_SOURCE_KEY_PREFIX, type ScrapedProduct, type ShopRow
 
 export const OWNED_CASEKING_CONVEX_URL = "https://aware-toucan-771.eu-west-1.convex.cloud";
 const BATCH = 200;
+const LIVE_BATCH = 50;
 // Групите четат всички доставчици с този EAN: по-малки порции, а при
 // „too many operations“ порцията се разполовява и се праща наново.
 const GROUP_BATCH = 100;
@@ -138,15 +139,31 @@ export async function runSync(
   const samples: any[] = [];
   const groupKeys = new Set<string>();
   const applied: ShopRow[] = [];
-  for (let i = 0; i < send.length; i += BATCH) {
-    const chunk = send.slice(i, i + BATCH);
-    const res = await deps.mutation("omaxSync:applyBatch", { rows: chunk, dryRun });
+  // Записът на нов продукт струва повече операции от проверката на сухо:
+  // на живо порциите са по-малки, а при отказ „too many operations“ порцията
+  // се разполовява (Convex не записва нищо от отказана порция).
+  const applyChunk = async (chunk: ShopRow[]): Promise<void> => {
+    let res: any;
+    try {
+      res = await deps.mutation("omaxSync:applyBatch", { rows: chunk, dryRun });
+    } catch (error) {
+      if (chunk.length <= 1 || !isTooBig(error)) throw error;
+      const half = Math.ceil(chunk.length / 2);
+      await applyChunk(chunk.slice(0, half));
+      await applyChunk(chunk.slice(half));
+      return;
+    }
     for (const k of Object.keys(totals) as (keyof typeof totals)[]) totals[k] += res[k] ?? 0;
     for (const [c, n] of Object.entries(res.categories ?? {})) categories[c] = (categories[c] ?? 0) + (n as number);
     for (const b of res.newBrands ?? []) newBrands.add(b);
     if (samples.length < 40) samples.push(...(res.samples ?? []).slice(0, 40 - samples.length));
     for (const k of res.groupKeys ?? []) groupKeys.add(k);
     applied.push(...chunk);
+  };
+  const applySize = dryRun ? BATCH : LIVE_BATCH;
+  for (let i = 0; i < send.length; i += applySize) {
+    await applyChunk(send.slice(i, i + applySize));
+    if (!dryRun && i % 1000 === 0) log(`  записани ${Math.min(i + applySize, send.length)} от ${send.length}`);
   }
   log(`Продукти: +${totals.created} нови, ${totals.changed} променени, ${totals.unchanged} без промяна, ${totals.foreign} чужди`);
 
@@ -190,12 +207,21 @@ export async function runSync(
       cursor = page.continueCursor;
     }
   }
-  for (let i = 0; i < toZero.length; i += BATCH) {
-    const chunk = toZero.slice(i, i + BATCH);
-    const res = await deps.mutation("omaxSync:zeroStockByKeys", { sourceKeys: chunk, dryRun });
+  const zeroChunk = async (chunk: string[]): Promise<void> => {
+    let res: any;
+    try {
+      res = await deps.mutation("omaxSync:zeroStockByKeys", { sourceKeys: chunk, dryRun });
+    } catch (error) {
+      if (chunk.length <= 1 || !isTooBig(error)) throw error;
+      const half = Math.ceil(chunk.length / 2);
+      await zeroChunk(chunk.slice(0, half));
+      await zeroChunk(chunk.slice(half));
+      return;
+    }
     zeroed += res.zeroed ?? 0; wouldZero += res.wouldZero ?? 0;
     zeroedKeys.push(...chunk);
-  }
+  };
+  for (let i = 0; i < toZero.length; i += LIVE_BATCH) await zeroChunk(toZero.slice(i, i + LIVE_BATCH));
   if (stockZeroMode !== "skipped-feed-drop") {
     log(`Изчезнали от Omax: ${toZero.length}; ${dryRun ? `биха се нулирали ${wouldZero} (dry)` : `нулирани ${zeroed}`}`);
   }

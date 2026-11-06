@@ -251,4 +251,24 @@ describe("sync", () => {
     expect(report.groups.checked).toBe(120);
     expect(Math.max(...seen)).toBe(100);
   });
+
+  test("a live product batch that is too big is split in half; nothing is lost", async () => {
+    const cx = fakeConvex();
+    const sizes: number[] = [];
+    const deps = {
+      ...cx.deps,
+      mutation: async (name: string, args: any) => {
+        if (name === "omaxSync:applyBatch") {
+          sizes.push(args.rows.length);
+          if (args.rows.length > 20) throw new Error("Your request timed out performing too many system operations.");
+          return { created: args.rows.length, groupKeys: [] };
+        }
+        return cx.deps.mutation(name, args);
+      },
+    };
+    const { report, nextSnapshot } = await runSync({ products: feed(120), deferred: [] }, MANY_MODELS, null, { live: true }, deps);
+    expect(report.created).toBe(120);
+    expect(Object.keys(nextSnapshot.rows)).toHaveLength(120);
+    expect(sizes[0]).toBe(50);
+  });
 });
