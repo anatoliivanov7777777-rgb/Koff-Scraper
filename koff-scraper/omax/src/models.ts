@@ -96,7 +96,7 @@ export class ModelIndex {
 /** Отрязва цвета ("/черен/"), допълненията след запетая и т.н. */
 function modelSegment(rest: string): string {
   let text = rest;
-  const cut = text.search(/\s\/[^/]*\/|\s\/[^/\d]+$|,|\s-\s|\s\(|\sMAG\b|\sOEM\b|\sMagSafe\b|\s\+\s/i);
+  const cut = text.search(/\s\/[^/]*\/|\s\/[^/\d]+$|,|\s-\s|\s\(|\s#|\sMAG\b|\sOEM\b|\sMagSafe\b|\s\+\s/i);
   if (cut >= 0) text = text.slice(0, cut);
   return text.replace(/\s+(NORDIC|BASEUS|UGREEN|XO|HOCO|SPIGEN|ESR|ANANK)$/i, "").trim();
 }
