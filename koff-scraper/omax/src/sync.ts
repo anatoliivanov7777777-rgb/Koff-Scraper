@@ -70,15 +70,20 @@ export function isFeedDrop(current: number, previous: number | undefined): boole
 export function buildRows(products: ScrapedProduct[], index: ModelIndex) {
   const rows: ShopRow[] = [];
   const skipped: Record<string, number> = {};
+  const skippedList: { productId: number; name: string; category: string; reason: string }[] = [];
   const seen = new Set<string>();
   for (const p of products) {
     const result = buildShopRow(p, index);
-    if ("skip" in result) { skipped[result.skip] = (skipped[result.skip] ?? 0) + 1; continue; }
+    if ("skip" in result) {
+      skipped[result.skip] = (skipped[result.skip] ?? 0) + 1;
+      skippedList.push({ productId: p.productId, name: p.name, category: p.categoryPath, reason: result.skip });
+      continue;
+    }
     if (seen.has(result.row.sourceKey)) continue;
     seen.add(result.row.sourceKey);
     rows.push(result.row);
   }
-  return { rows, skipped };
+  return { rows, skipped, skippedList };
 }
 
 export function needsFullResend(snapshot: Snapshot | null, now: number, forced: boolean): boolean {
@@ -113,7 +118,8 @@ export async function runSync(
   if (models.length < 100) throw new Error(`Само ${models.length} модела от магазина - спирам`);
   const index = new ModelIndex(models);
 
-  const { rows, skipped } = buildRows(products, index);
+  const { rows, skipped, skippedList } = buildRows(products, index);
+  for (const x of skippedList) log(`  пропуснат [${x.reason}] ${x.productId} | ${x.name} | ${x.category}`);
   const keep = new Set(scraped.deferred.map((id) => `${OMAX_SOURCE_KEY_PREFIX}${id}`));
   const full = needsFullResend(snapshot, now, Boolean(options.full));
   const { send, gone } = planDiff(rows, snapshot, keep, full);
@@ -232,6 +238,7 @@ export async function runSync(
       sent: send.length,
       deferred: keep.size,
       skipped,
+      skippedList,
       ...totals,
       categories,
       newBrands: [...newBrands],
