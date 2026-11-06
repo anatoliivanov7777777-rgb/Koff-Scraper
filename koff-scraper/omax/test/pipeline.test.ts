@@ -48,6 +48,14 @@ describe("shop row", () => {
     expect("row" in r && r.row).toMatchObject({ brand: "Hoco", model: "Всички модели", supplierSku: "X14", publicMaker: "Hoco",
       proposedName: "Кабел HOCO X14 USB-A към Lightning 1m - черен", category: "kabeli-za-zaryadane" });
   });
+  test("phone names follow the shop: Galaxy, Xiaomi, Motorola; the old name is sent for renaming", () => {
+    const idx = new ModelIndex([{ brand: "Samsung", name: "S26 Ultra" }, { brand: "Xiaomi", name: "15 Ultra" }, { brand: "MOTO", name: "Edge 70" }, { brand: "Xiaomi", name: "Redmi 9C" }]);
+    const name = (title: string): unknown[] => { const r = buildShopRow(product({ name: title, kind: "case" }), idx); return "row" in r ? [r.row.proposedName, r.row.previousName] : [r]; };
+    expect(name("SAMSUNG Калъф Samsung S26 Ultra, Silicone Cover /черен/ - EF-ES948CBEGWW")).toEqual(["Калъф SAMSUNG за Samsung Galaxy S26 Ultra - черен", "Калъф SAMSUNG за Samsung S26 Ultra - черен"]);
+    expect(name("Калъф Business CARBON Xiaomi 15 Ultra /черен/")).toEqual(["Калъф Business CARBON за Xiaomi 15 Ultra - черен", "Калъф Business CARBON за 15 Ultra - черен"]);
+    expect(name("Калъф Carbon Motorola Edge 70 /черен/")).toEqual(["Калъф Carbon за Motorola Edge 70 - черен", "Калъф Carbon за Edge 70 - черен"]);
+    expect(name("Калъф Carbon Xiaomi RedMi 9C /черен/")[0]).toBe("Калъф Carbon за Xiaomi Redmi 9C - черен");
+  });
   test("helpers", () => {
     expect(codeOf("LDNIO Зарядно 20W - A2318M")).toBe("A2318M");
     expect(codeOf("Калъф Apple iPhone 16 - черен")).toBe("");
@@ -250,5 +258,25 @@ describe("sync", () => {
     const { report } = await runSync({ products: feed(120), deferred: [] }, MANY_MODELS, null, { live: false }, deps);
     expect(report.groups.checked).toBe(120);
     expect(Math.max(...seen)).toBe(100);
+  });
+
+  test("a live product batch that is too big is split in half; nothing is lost", async () => {
+    const cx = fakeConvex();
+    const sizes: number[] = [];
+    const deps = {
+      ...cx.deps,
+      mutation: async (name: string, args: any) => {
+        if (name === "omaxSync:applyBatch") {
+          sizes.push(args.rows.length);
+          if (args.rows.length > 20) throw new Error("Your request timed out performing too many system operations.");
+          return { created: args.rows.length, groupKeys: [] };
+        }
+        return cx.deps.mutation(name, args);
+      },
+    };
+    const { report, nextSnapshot } = await runSync({ products: feed(120), deferred: [] }, MANY_MODELS, null, { live: true }, deps);
+    expect(report.created).toBe(120);
+    expect(Object.keys(nextSnapshot.rows)).toHaveLength(120);
+    expect(sizes[0]).toBe(50);
   });
 });

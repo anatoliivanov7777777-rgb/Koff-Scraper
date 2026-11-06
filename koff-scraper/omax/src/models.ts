@@ -96,7 +96,7 @@ export class ModelIndex {
 /** Отрязва цвета ("/черен/"), допълненията след запетая и т.н. */
 function modelSegment(rest: string): string {
   let text = rest;
-  const cut = text.search(/\s\/[^/]*\/|\s\/[^/\d]+$|,|\s-\s|\s\(|\sMAG\b|\sOEM\b|\sMagSafe\b|\s\+\s/i);
+  const cut = text.search(/\s\/[^/]*\/|\s\/[^/\d]+$|,|\s-\s|\s\(|\s#|\sMAG\b|\sOEM\b|\sMagSafe\b|\s\+\s/i);
   if (cut >= 0) text = text.slice(0, cut);
   return text.replace(/\s+(NORDIC|BASEUS|UGREEN|XO|HOCO|SPIGEN|ESR|ANANK)$/i, "").trim();
 }
@@ -104,13 +104,26 @@ function modelSegment(rest: string): string {
 /** Кандидатите за модели от заглавие: [{марка, текст}], по ред. */
 export function modelCandidates(title: string): Array<{ brand: string; text: string }> {
   const words = title.replace(/\s+/g, " ").trim().split(" ");
-  for (let i = 0; i < words.length; i++) {
+  // Всяко срещане на марка дава кандидати: "SAMSUNG Калъф Samsung S26 Ultra" -
+  // първото "SAMSUNG" е производителят, моделът е след второто.
+  const all: Array<{ brand: string; text: string }> = [];
+  for (let from = 0; from < words.length; from++) {
+    const found = candidatesFrom(words, from);
+    if (!found) break;
+    all.push(...found.out);
+    from = found.at;
+  }
+  return all;
+}
+
+function candidatesFrom(words: string[], startAt: number): { out: Array<{ brand: string; text: string }>; at: number } | null {
+  for (let i = startAt; i < words.length; i++) {
     const word = words[i].replace(/[,]/g, "");
     const hit = BRAND_WORDS.find((b) => b.re.test(word));
     if (!hit) continue;
     const start = hit.keepWord ? i : i + 1;
     const segment = modelSegment(words.slice(start).join(" "));
-    if (!segment) continue;
+    if (!segment) return { out: [], at: i };
     const parts = segment.split(/\s*\/\s*/).map((p) => p.trim()).filter(Boolean);
     const firstWord = parts[0]?.split(" ")[0] ?? "";
     const out: Array<{ brand: string; text: string }> = [];
@@ -130,9 +143,9 @@ export function modelCandidates(title: string): Array<{ brand: string; text: str
       out.push({ brand: hit.brand, text });
     }
     // Shared 4G/5G suffix ("A55/A36/A56 5G") does not matter: the key drops it.
-    return out;
+    return { out, at: i };
   }
-  return [];
+  return null;
 }
 
 /** Разпознатите телефони от заглавие, първият е основният. */
