@@ -231,4 +231,24 @@ describe("sync", () => {
     expect(planDiff([r.row], snap, new Set(), false).send).toHaveLength(0);
     expect(planDiff([r.row], snap, new Set(), true).send).toHaveLength(1);
   });
+
+  test("a group batch that is too big is split in half and sent again", async () => {
+    const cx = fakeConvex();
+    const seen: number[] = [];
+    const deps = {
+      ...cx.deps,
+      mutation: async (name: string, args: any) => {
+        if (name === "omaxSync:applyBatch") return { created: args.rows.length, groupKeys: args.rows.map((r: any) => r.sourceKey) };
+        if (name === "omaxSync:buildGroupsForKeys") {
+          seen.push(args.keys.length);
+          if (args.keys.length > 30) throw new Error("Your request timed out performing too many system operations.");
+          return { checked: args.keys.length, created: 0, refreshed: 0, withMembers: 0, dryRun: true };
+        }
+        return cx.deps.mutation(name, args);
+      },
+    };
+    const { report } = await runSync({ products: feed(120), deferred: [] }, MANY_MODELS, null, { live: false }, deps);
+    expect(report.groups.checked).toBe(120);
+    expect(Math.max(...seen)).toBe(100);
+  });
 });

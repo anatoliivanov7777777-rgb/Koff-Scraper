@@ -35,7 +35,9 @@ import { buildShopRow, OMAX_SOURCE_KEY_PREFIX, type ScrapedProduct, type ShopRow
 
 export const OWNED_CASEKING_CONVEX_URL = "https://aware-toucan-771.eu-west-1.convex.cloud";
 const BATCH = 200;
-const GROUP_BATCH = 500;
+// Групите четат всички доставчици с този EAN: по-малки порции, а при
+// „too many operations“ порцията се разполовява и се праща наново.
+const GROUP_BATCH = 100;
 export const MIN_PRODUCTS = 50;
 export const FEED_DROP_RATIO = 0.9;
 export const FULL_RESEND_DAYS = 7;
@@ -53,6 +55,11 @@ export interface SyncDeps {
 
 export function rowHash(row: ShopRow): string {
   return createHash("sha1").update(JSON.stringify(row)).digest("hex").slice(0, 16);
+}
+
+/** Convex отказа порцията като твърде голяма (много операции/четения). */
+export function isTooBig(error: unknown): boolean {
+  return /too many|timed out|read limit|exceeded/i.test(error instanceof Error ? error.message : String(error));
 }
 
 export function isFeedDrop(current: number, previous: number | undefined): boolean {
@@ -139,11 +146,20 @@ export async function runSync(
 
   const groups = { checked: 0, created: 0, refreshed: 0, withMembers: 0, dryRun: true };
   const keys = [...groupKeys];
-  for (let i = 0; i < keys.length; i += GROUP_BATCH) {
-    const res = await deps.mutation("omaxSync:buildGroupsForKeys", { keys: keys.slice(i, i + GROUP_BATCH), dryRun });
-    groups.checked += res.checked ?? 0; groups.created += res.created ?? 0; groups.refreshed += res.refreshed ?? 0;
-    groups.withMembers += res.withMembers ?? 0; groups.dryRun = res.dryRun;
-  }
+  const buildGroups = async (slice: string[]): Promise<void> => {
+    try {
+      const res = await deps.mutation("omaxSync:buildGroupsForKeys", { keys: slice, dryRun });
+      groups.checked += res.checked ?? 0; groups.created += res.created ?? 0; groups.refreshed += res.refreshed ?? 0;
+      groups.withMembers += res.withMembers ?? 0; groups.dryRun = res.dryRun;
+    } catch (error) {
+      if (slice.length <= 1 || !isTooBig(error)) throw error;
+      const half = Math.ceil(slice.length / 2);
+      await buildGroups(slice.slice(0, half));
+      await buildGroups(slice.slice(half));
+    }
+  };
+  for (let i = 0; i < keys.length; i += GROUP_BATCH) await buildGroups(keys.slice(i, i + GROUP_BATCH));
+  log(`Групи за дубликати: ${groups.withMembers} с поне двама доставчика (${groups.created} нови)${groups.dryRun ? " - DRY" : ""}`);
 
   // Изчезналите от наличните: нулиране по ключ.
   const previous = await deps.query("omaxSync:previousRun", {});
