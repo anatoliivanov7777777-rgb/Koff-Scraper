@@ -408,7 +408,15 @@ async function main() {
 
   const convex = new ConvexHttpClient(CASEKING_CONVEX_URL);
 
-  await runBackfillMigration(convex);
+  // Convex cost (owner, 2026-11-07): this one-time migration read EVERY
+  // product on every daily sync (~5 GB of database reads a month) to fill a
+  // matchKey that every insert has set for weeks (products:upsertBatch). It
+  // now runs only when asked for: BACKFILL_MATCH_KEYS=true.
+  if (process.env.BACKFILL_MATCH_KEYS === "true") {
+    await runBackfillMigration(convex);
+  } else {
+    console.log("matchKey миграцията е пропусната (пусни с BACKFILL_MATCH_KEYS=true при нужда).");
+  }
 
   console.log("\nЗареждам съществуващи категории/марки/модели от case-king.bg...");
   const [existingCats, existingBrands, existingModels] = await Promise.all([
