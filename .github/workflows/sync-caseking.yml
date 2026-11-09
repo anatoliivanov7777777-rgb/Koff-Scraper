@@ -52,14 +52,17 @@ on:
     # GitHub counts in UTC: 09:00 UTC is 11:00 in winter (EET) and 12:00 in
     # summer (EEST) - move it to 08:00 UTC when summer time starts.
     - cron: '0 9 * * *'
-    # Two more tries the same day (owner, 2026-11-09: the sync must recover on
+    # More tries the same day (owner, 2026-11-09: the sync must recover on
     # its own). The gate job below skips a scheduled run when a scheduled run
-    # already succeeded in the last 20 hours, so a good day still syncs once;
+    # already succeeded today (Bulgarian date), so a good day still syncs once;
     # a missed or broken morning run (computer off, runner lost its connection
-    # - 2026-11-08) is retried at 15:00 and 19:00 Bulgarian time instead of
-    # waiting a whole day.
+    # - 2026-11-08) is retried instead of waiting a whole day.
+    # Owner, 2026-11-09: tries at 11:00, 13:00, 15:00 and 17:00 Bulgarian time;
+    # once one succeeds, the later ones do nothing. In UTC (winter, EET) these
+    # are 09/11/13/15 - move each one hour earlier when summer time starts.
+    - cron: '0 11 * * *'
     - cron: '0 13 * * *'
-    - cron: '0 17 * * *'
+    - cron: '0 15 * * *'
 
 concurrency:
   group: sync-caseking
@@ -67,8 +70,9 @@ concurrency:
 
 jobs:
   # Decides whether this run does anything. Manual runs always go ahead; a
-  # scheduled run goes ahead only when no scheduled run succeeded in the last
-  # 20 hours (a run succeeds only when the Koff scrape and the sync both did).
+  # scheduled run goes ahead only when no scheduled run succeeded today, by the
+  # Bulgarian calendar (a run succeeds only when the Koff scrape and the sync
+  # both did).
   gate:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -93,11 +97,12 @@ jobs:
             koff=$(gh api "repos/${{ github.repository }}/actions/runs/$id/jobs" --jq '.jobs[] | select(.name == "scrape-koff") | .conclusion' || true)
             if [ "$koff" = "success" ]; then last="$updated"; break; fi
           done <<< "$runs"
-          if [ -n "$last" ] && [ $(( $(date -u +%s) - $(date -u -d "$last" +%s) )) -lt 72000 ]; then
-            echo "Last successful scheduled sync finished at $last (under 20 h ago) - nothing to do."
+          today=$(TZ=Europe/Sofia date +%F)
+          if [ -n "$last" ] && [ "$(TZ=Europe/Sofia date -d "$last" +%F)" = "$today" ]; then
+            echo "A scheduled sync already succeeded today ($today, finished $last) - nothing to do."
             echo "run=false" >> "$GITHUB_OUTPUT"
           else
-            echo "No successful scheduled sync in the last 20 h (last: ${last:-none}) - syncing."
+            echo "No successful scheduled sync today ($today; last: ${last:-none}) - syncing."
             echo "run=true" >> "$GITHUB_OUTPUT"
           fi
 
