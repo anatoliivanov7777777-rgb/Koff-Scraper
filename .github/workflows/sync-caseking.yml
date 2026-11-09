@@ -52,12 +52,55 @@ on:
     # GitHub counts in UTC: 09:00 UTC is 11:00 in winter (EET) and 12:00 in
     # summer (EEST) - move it to 08:00 UTC when summer time starts.
     - cron: '0 9 * * *'
+    # Two more tries the same day (owner, 2026-11-09: the sync must recover on
+    # its own). The gate job below skips a scheduled run when a scheduled run
+    # already succeeded in the last 20 hours, so a good day still syncs once;
+    # a missed or broken morning run (computer off, runner lost its connection
+    # - 2026-11-08) is retried at 15:00 and 19:00 Bulgarian time instead of
+    # waiting a whole day.
+    - cron: '0 13 * * *'
+    - cron: '0 17 * * *'
 
 concurrency:
   group: sync-caseking
   cancel-in-progress: false
 
 jobs:
+  # Decides whether this run does anything. Manual runs always go ahead; a
+  # scheduled run goes ahead only when no scheduled run succeeded in the last
+  # 20 hours (a run succeeds only when the Koff scrape and the sync both did).
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # A run the gate skipped also ends as "success", so only a run whose
+          # Koff scrape really ran and succeeded counts as a real sync.
+          last=""
+          runs=$(gh api "repos/${{ github.repository }}/actions/workflows/sync-caseking.yml/runs?event=schedule&status=success&per_page=10" --jq '.workflow_runs[] | "\(.id) \(.updated_at)"' || true)
+          while read -r id updated; do
+            [ -z "$id" ] && continue
+            koff=$(gh api "repos/${{ github.repository }}/actions/runs/$id/jobs" --jq '.jobs[] | select(.name == "scrape-koff") | .conclusion' || true)
+            if [ "$koff" = "success" ]; then last="$updated"; break; fi
+          done <<< "$runs"
+          if [ -n "$last" ] && [ $(( $(date -u +%s) - $(date -u -d "$last" +%s) )) -lt 72000 ]; then
+            echo "Last successful scheduled sync finished at $last (under 20 h ago) - nothing to do."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "No successful scheduled sync in the last 20 h (last: ${last:-none}) - syncing."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
   # ---- Koff, from the owner's computer (owner, 2026-10-27) ----
   # Since 2026-10-27 shop.koff.ro answers every non-browser client with a
   # Cloudflare check (HTTP 403), from GitHub's servers and from the owner's home
@@ -72,7 +115,8 @@ jobs:
   # The computer must be on (and the runner running) at the scheduled time;
   # otherwise this job waits in the queue and the sync job does LStar alone.
   scrape-koff:
-    if: github.event.inputs.only_lstar != 'true'
+    needs: gate
+    if: needs.gate.outputs.run == 'true' && github.event.inputs.only_lstar != 'true'
     runs-on: [self-hosted, Windows, koff]
     # A normal scrape takes about 10 minutes (2026-11-02: 9 min). 45 leaves room
     # for retries, but a stuck run no longer holds the owner's computer for 2
@@ -134,10 +178,11 @@ jobs:
           retention-days: 3
 
   sync:
-    needs: scrape-koff
+    needs: [gate, scrape-koff]
     # Runs even when the Koff part failed or was skipped, so LStar still syncs;
-    # the Koff steps below run only after a successful Koff scrape.
-    if: ${{ always() }}
+    # the Koff steps below run only after a successful Koff scrape. Skipped
+    # entirely when the gate says a scheduled sync already succeeded today.
+    if: ${{ always() && needs.gate.outputs.run == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
