@@ -458,7 +458,16 @@ export function createKoffClient({
     }
 
     await ensureFreshToken();
-    const csrfCookie = cookieJar.get("_csrf");
+    // Browser mode (KOFF_BROWSER=true): the browser keeps the cookies, so the
+    // jar is empty and the value comes from the Koff window itself.
+    let csrfCookie = cookieJar.get("_csrf");
+    if (!csrfCookie && typeof fetchImpl.readCookie === "function") {
+      try {
+        csrfCookie = await fetchImpl.readCookie("_csrf");
+      } catch {
+        csrfCookie = null;
+      }
+    }
     if (!csrfCookie) {
       const error = new Error("Koff CSRF cookie is unavailable");
       error.koffCartWriteAttempted = false;

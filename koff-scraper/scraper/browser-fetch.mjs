@@ -220,6 +220,19 @@ export function createBrowserFetch({
     if (current) await withTimeout(Promise.resolve().then(() => current.close()), closeTimeoutMs, "Closing the browser").catch(() => {});
   }
 
+  // The window's own cookie (2026-11-17). In browser mode the client's cookie
+  // jar stays empty, so the cart write's X-CSRF-Token value has to come from
+  // the cookie this Koff window received itself. Only the Koff shop's cookies
+  // are read, only from this automated window (never the owner's own Chrome
+  // profile), and the value is handed to the client, never logged.
+  async function readCookie(name) {
+    await ensureOpen();
+    const cookies = await withTimeout(page.context().cookies(origin), requestTimeoutMs, "Reading the Koff cookie");
+    const found = cookies.find((cookie) => cookie.name === name);
+    return found ? found.value : null;
+  }
+  browserFetch.readCookie = readCookie;
+
   return { fetch: browserFetch, close };
 }
 

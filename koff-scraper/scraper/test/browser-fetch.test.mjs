@@ -155,3 +155,62 @@ test("a browser that never opens a tab fails instead of hanging", async () => {
   const bf = createBrowserFetch({ launch, logger: quiet, launchTimeoutMs: 20 });
   await assert.rejects(() => bf.fetch("https://shop.koff.ro/en"), /did not finish/);
 });
+
+// 2026-11-17: in browser mode the client's cookie jar stays empty, so the cart
+// write could never find the _csrf cookie and every order line stopped with
+// "Koff fulfillment stopped before any cart write". The browser window's own
+// _csrf cookie must be readable for that one header.
+test("readCookie returns the Koff window's own cookie, and only for the Koff shop", async () => {
+  const b = fakeBrowser({ handler: () => ({ ok: true, status: 200, statusText: "OK", headers: [], text: "[]" }) });
+  const asked = [];
+  const launch = async (opts) => {
+    const browser = await b.launch(opts);
+    return {
+      ...browser,
+      newPage: async () => {
+        const page = await browser.newPage();
+        page.context = () => ({
+          async cookies(url) { asked.push(url); return [{ name: "other", value: "x" }, { name: "_csrf", value: "abc%3A1" }]; },
+        });
+        return page;
+      },
+    };
+  };
+  const bf = createBrowserFetch({ launch, logger: quiet });
+  assert.equal(typeof bf.fetch.readCookie, "function");
+  assert.equal(await bf.fetch.readCookie("_csrf"), "abc%3A1");
+  assert.equal(await bf.fetch.readCookie("missing"), null);
+  assert.deepEqual(asked, ["https://shop.koff.ro", "https://shop.koff.ro"]);
+  await bf.close();
+});
+
+test("client cart write in browser mode takes the CSRF value from the browser window", async () => {
+  const sent = [];
+  // Browser mode: no response ever carries a readable Set-Cookie.
+  const replies = {
+    "/en": () => new Response('<meta name="csrf-token" content="meta-fixture">', { status: 200, headers: { "Content-Type": "text/html" } }),
+    "/login/enter": () => new Response(JSON.stringify({ success: true }), { status: 200 }),
+    "/login/refresh": () => new Response(JSON.stringify({ accessToken: "tok-fixture" }), { status: 200 }),
+    "/api/cart/add-products": () => new Response("{}", { status: 200 }),
+  };
+  const fetchImpl = async (url, options) => {
+    const path = new URL(url).pathname;
+    sent.push({ path, headers: options.headers });
+    return (replies[path] ?? replies["/en"])();
+  };
+  fetchImpl.readCookie = async (name) => (name === "_csrf" ? "csrf%3Afrom-window" : null);
+  const client = createKoffClient({
+    email: "fixture@example.invalid",
+    password: "fixture-password",
+    fetchImpl,
+    liveCartWrites: true,
+    logger: quiet,
+    minRequestIntervalMs: 1,
+  });
+  await client.login();
+  await client.ensureFreshToken();
+  await client.setAbsoluteCartQuantity(371338, 1);
+  const write = sent.find((c) => c.path === "/api/cart/add-products");
+  assert.ok(write, "the cart write must be sent");
+  assert.equal(write.headers.get("X-CSRF-Token"), "csrf:from-window");
+});
